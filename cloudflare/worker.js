@@ -11,6 +11,10 @@ const JSON_HEADERS = {
 
 const FIRMWARE_ORIGIN =
   "https://raw.githubusercontent.com/yuannihui001-jpg/TamaPoke/main/web/firmware/";
+const INSTALLER_ORIGIN =
+  "https://raw.githubusercontent.com/yuannihui001-jpg/TamaPoke/main/web/index.html";
+const SPRITES_ORIGIN =
+  "https://raw.githubusercontent.com/yuannihui001-jpg/TamaPoke/main/web/sprites.pak";
 const GRANT_TTL_SECONDS = 10 * 60;
 
 function json(value, status = 200) {
@@ -160,6 +164,26 @@ export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: JSON_HEADERS });
     const url = new URL(request.url);
+    if (url.pathname === "/" && request.method === "GET") {
+      const page = await fetch(INSTALLER_ORIGIN, { cf: { cacheTtl: 0 } });
+      if (!page.ok) return new Response("Installer unavailable", { status: 503 });
+      return new Response(await page.text(), {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    }
+    if (url.pathname === "/sprites.pak" && request.method === "GET") {
+      const sprites = await fetch(SPRITES_ORIGIN, { cf: { cacheTtl: 3600 } });
+      if (!sprites.ok) return new Response("Sprites unavailable", { status: 503 });
+      return new Response(sprites.body, {
+        headers: {
+          "content-type": "application/octet-stream",
+          "cache-control": "public, max-age=3600",
+        },
+      });
+    }
     if (url.pathname === "/v1/activate" && request.method === "POST") return activate(request, env);
     if (url.pathname === "/v1/browser-manifest" && request.method === "POST") return browserManifest(request, env);
     if (url.pathname === "/v1/firmware" && request.method === "GET") return firmware(request, env, "device");
