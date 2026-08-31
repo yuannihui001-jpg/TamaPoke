@@ -81,7 +81,10 @@ bool usbPresent() { refreshPower(); return cachedUsb; }
 
 void pwrSetup() {
   if (!pmuOk) return;
-  pmu.setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
+  // AXP2101 only offers 4/6/8/10 second hardware thresholds; 6 s is the
+  // closest stable option to the requested 5-second long press and prevents
+  // accidental shutdowns while keeping the same long-press wake behavior.
+  pmu.setPowerKeyPressOffTime(XPOWERS_POWEROFF_6S);
   pmu.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
   pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
   pmu.clearIrqStatus();
