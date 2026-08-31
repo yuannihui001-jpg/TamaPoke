@@ -1,4 +1,5 @@
 // TamaPoke strict license gateway.
+// Release 2.27.0: encrypted origin, device-bound tokens, and browser grants.
 // Bind a Workers KV namespace (tomagochi or LICENSES) and add FIRMWARE_KEY as a secret.
 
 const JSON_HEADERS = {
