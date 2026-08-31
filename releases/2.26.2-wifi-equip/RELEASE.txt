@@ -1,0 +1,10 @@
+TamaPoke v2.26.2 Wi-Fi + equipment release
+Board: 微雪 ESP32-S3-Touch-AMOLED-1.75
+Built: 2026-08-31
+Merged image: tamapoke-2.26.2-merged.bin (16 MB)
+SHA256: C5B9BD0459577F6332FBD79C4B0E3F58B179C18A494B9D2B486429368422F733
+Application image: tamapoke-2.26.2-app.bin (1426512 bytes)
+SHA256: 51C841C851109C8E0E66B963FE29867173E4B3625C6DF22D0CA7CE738290CC0E
+Install: open web/start_installer.bat or http://localhost:8000/
+OTA URL configured in firmware: https://raw.githubusercontent.com/socquique/TamaPoke/main/web/firmware/tamapoke-app.bin
+Note: public GitHub files must be updated by a repository account with write permission before OTA can work online.
