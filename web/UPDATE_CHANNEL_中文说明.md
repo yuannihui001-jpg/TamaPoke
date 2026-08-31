@@ -1,8 +1,8 @@
 # TamaPoke 在线更新通道
 
-设备设置页的“更新”按钮使用 GitHub Pages 上的应用分区镜像：
+设备设置页的“更新”按钮使用 GitHub 原始文件上的应用分区镜像：
 
-`https://socquique.github.io/TamaPoke/web/firmware/tamapoke-app.bin`
+`https://raw.githubusercontent.com/socquique/TamaPoke/main/web/firmware/tamapoke-app.bin`
 
 每次发布新固件时：
 
