@@ -32,7 +32,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "2.26.3"
+#define FW_VERSION "2.27.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -78,6 +78,7 @@ static int uiTextWidth(const char *s, int asciiCell) {
 TouchDrvCST92xx touch;
 Pet pet;
 Preferences uiPrefs;
+String authToken;
 
 // sprite animado de la SD para la especie actual (si existe el archivo)
 SdMon mon;          // sprite B/N (respaldo y minijuego si no hay PMD)
@@ -133,7 +134,7 @@ uint32_t wifiConnectStarted = 0;
 uint32_t wifiNoticeUntil = 0;
 char wifiNotice[48] = "";
 // 将最新 app 分区镜像放到这个公开地址后，设置页的“更新”即可 OTA。
-static const char *const UPDATE_BIN_URL = "https://raw.githubusercontent.com/yuannihui001-jpg/TamaPoke/main/web/firmware/tamapoke-app.bin";
+static const char *const AUTH_SERVER_URL = "https://tamapoke-license.yuannihui001.workers.dev";
 
 // minijuego "toques": mantener la pokeball en el aire
 bool gameOpen = false;
@@ -295,6 +296,8 @@ void warehouseTap(int16_t x, int16_t y);
 void serviceWifi();
 void startWifiConnection();
 void onlineUpdate();
+void activateLicense(const String &license);
+String deviceIdString();
 void drawWorldBadge();
 void startBattle();
 void battleTap(int16_t x, int16_t y);
@@ -326,6 +329,7 @@ void setup() {
   brightnessSetting = constrain(uiPrefs.getUChar("bright", 180), 20, 255);
   volumeLevel = min((uint8_t)2, uiPrefs.getUChar("volume", 1));
   touchSensitivity = constrain(uiPrefs.getUChar("touch", 55), 32, 80);
+  authToken = uiPrefs.getString("auth", "");
   Wire.begin(IIC_SDA, IIC_SCL);
   // CST9217 (tactil), AXP2101 (PMU) y PCF85063 (RTC) comparten este bus I2C.
   // Red de seguridad para PMU/RTC (SensorLib NO respeta este timeout en el
@@ -490,6 +494,13 @@ static void setWifiNotice(const char *msg, uint32_t ms = 5000) {
   wifiNoticeUntil = millis() + ms;
 }
 
+String deviceIdString() {
+  uint64_t chip = ESP.getEfuseMac();
+  char id[17];
+  snprintf(id, sizeof(id), "%08lX%08lX", (unsigned long)(chip >> 32), (unsigned long)chip);
+  return String(id);
+}
+
 void startWifiConnection() {
   String ssid = uiPrefs.getString("ssid", "");
   String pass = uiPrefs.getString("pass", "");
@@ -522,21 +533,71 @@ void serviceWifi() {
   }
 }
 
+void activateLicense(const String &license) {
+  if (WiFi.status() != WL_CONNECTED) {
+    setWifiNotice("请先连接 WiFi");
+    return;
+  }
+  if (!license.length()) {
+    setWifiNotice("许可码不能为空");
+    return;
+  }
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = String(AUTH_SERVER_URL) + "/v1/activate";
+  if (!http.begin(client, url)) {
+    setWifiNotice("授权服务无法打开");
+    return;
+  }
+  http.addHeader("Content-Type", "application/json");
+  String body = String("{\"license\":\"") + license + "\",\"deviceId\":\"" + deviceIdString() + "\"}";
+  int code = http.POST(body);
+  String response = code > 0 ? http.getString() : "";
+  http.end();
+  int start = response.indexOf("\"token\":\"");
+  if (code != HTTP_CODE_OK || start < 0) {
+    Serial.printf("授权失败 HTTP %d\n", code);
+    setWifiNotice(code == 409 ? "许可已绑定其他设备" : "许可码无效");
+    return;
+  }
+  start += 9;
+  int end = response.indexOf('"', start);
+  if (end <= start) {
+    setWifiNotice("授权响应无效");
+    return;
+  }
+  authToken = response.substring(start, end);
+  uiPrefs.putString("auth", authToken);
+  Serial.printf("设备已授权 ID=%s\n", deviceIdString().c_str());
+  setWifiNotice("授权成功");
+}
+
 void onlineUpdate() {
   if (WiFi.status() != WL_CONNECTED) {
     setWifiNotice("请先连接 WiFi");
     return;
   }
+  if (!authToken.length()) {
+    setWifiNotice("请先输入作者许可码");
+    Serial.printf("设备 ID: %s\n", deviceIdString().c_str());
+    Serial.println("请发送: LICENSE <许可码>");
+    return;
+  }
   setWifiNotice("正在下载更新，请勿断电", 30000);
-  Serial.printf("OTA %s\n", UPDATE_BIN_URL);
+  Serial.printf("OTA %s\n", AUTH_SERVER_URL);
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  if (!http.begin(client, UPDATE_BIN_URL)) {
+  String url = String(AUTH_SERVER_URL) + "/v1/firmware";
+  if (!http.begin(client, url)) {
     setWifiNotice("更新地址无法打开");
     return;
   }
+  http.addHeader("Authorization", String("Bearer ") + authToken);
+  http.addHeader("X-TamaPoke-Device", deviceIdString());
+  http.addHeader("X-TamaPoke-Version", FW_VERSION);
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
     Serial.printf("OTA HTTP %d\n", code);
@@ -571,6 +632,26 @@ void handleSerial() {
   String line = Serial.readStringUntil('\n');
   line.trim();
   if (line.length() == 0) return;
+  if (line == "DEVICEID") {
+    Serial.printf("device=%s\n", deviceIdString().c_str());
+    Serial.println("DONE");
+    return;
+  }
+  if (line.startsWith("LICENSE ")) {
+    activateLicense(line.substring(8));
+    return;
+  }
+  if (line == "AUTHSTATUS") {
+    Serial.printf("authorized=%d device=%s\n", authToken.length() > 0, deviceIdString().c_str());
+    Serial.println("DONE");
+    return;
+  }
+  if (line == "AUTHCLEAR") {
+    authToken = "";
+    uiPrefs.remove("auth");
+    Serial.println("授权已清除");
+    return;
+  }
   if (line.startsWith("WIFI ")) {
     String args = line.substring(5);
     int split = args.indexOf(' ');

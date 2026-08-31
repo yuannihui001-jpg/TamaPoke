@@ -1,0 +1,10 @@
+name = "tamapoke-license"
+main = "worker.js"
+compatibility_date = "2026-08-31"
+
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "2310ca679aac45f9bdacadc6761a1213"
+
+# Set this as a secret, never commit it:
+# npx wrangler secret put FIRMWARE_KEY

@@ -14,3 +14,6 @@ tools/cn_font_preview.png
 
 .DS_Store
 tools/pmd_cache/
+
+# Local Cloudflare authorization material; never publish these files.
+cloudflare/*.local.txt

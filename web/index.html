@@ -24,6 +24,8 @@
   esp-web-install-button[install-unsupported] { display:none; }
   .unsupported { display:none; color:var(--bad); font-weight:500; }
   .row { display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; }
+  .license { width: min(24rem, 100%); padding:.65rem .8rem; border:1px solid var(--track); border-radius:10px; font:inherit; }
+  #installer { display:none; }
   #log { font-family: ui-monospace, monospace; font-size:.85rem; background:#1b1b25; color:#d8dcf0;
          border-radius:10px; padding:.75rem 1rem; margin-top:1rem; max-height:220px; overflow:auto; white-space:pre-wrap; display:none; }
   .bar { height:10px; background:var(--track); border-radius:5px; overflow:hidden; margin-top:.75rem; display:none; }
@@ -45,8 +47,13 @@
 
   <h2><span class="num">1</span>安装中文固件</h2>
   <div class="step">
-    <p>用 USB-C 数据线连接开发板，点击下面的按钮，选择开发板对应的串口并等待完成。</p>
-    <esp-web-install-button manifest="manifest.json">
+    <p>先输入作者许可码验证，验证通过后会解锁一个限时安装地址。再连接 USB-C 数据线，选择开发板串口并等待完成。</p>
+    <div class="row">
+      <input id="license" class="license" type="password" autocomplete="off" placeholder="输入作者许可码">
+      <button id="authorizeInstall">验证许可并解锁安装</button>
+    </div>
+    <p class="note" id="authStatus">未验证许可码。</p>
+    <esp-web-install-button id="installer" manifest="manifest.json">
       <button slot="activate">⚡ 选择串口并安装中文固件</button>
       <span slot="unsupported">浏览器不支持，请使用电脑端 Chrome 或 Edge。</span>
       <span slot="not-allowed">请通过 HTTPS 或 localhost 打开本页面。</span>
@@ -87,6 +94,32 @@ const log = (m) => { const el = document.getElementById('log'); el.style.display
 const supported = 'serial' in navigator;
 if (!supported) { document.getElementById('unsupported').style.display='block';
   document.getElementById('connect').disabled = true; }
+
+const AUTH_GATEWAY = 'https://tamapoke-license.yuannihui001.workers.dev';
+let authorizedManifestUrl = '';
+document.getElementById('authorizeInstall').onclick = async () => {
+  const code = document.getElementById('license').value.trim();
+  const status = document.getElementById('authStatus');
+  if (!code) { status.textContent = '请输入作者许可码。'; return; }
+  status.textContent = '正在验证许可码……';
+  try {
+    const resp = await fetch(AUTH_GATEWAY + '/v1/browser-manifest', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({license: code})
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.manifest) throw new Error(payload.error || ('HTTP ' + resp.status));
+    if (authorizedManifestUrl) URL.revokeObjectURL(authorizedManifestUrl);
+    authorizedManifestUrl = URL.createObjectURL(new Blob([JSON.stringify(payload.manifest)], {type:'application/json'}));
+    const installer = document.getElementById('installer');
+    installer.setAttribute('manifest', authorizedManifestUrl);
+    installer.style.display = 'inline-block';
+    status.textContent = '许可验证成功，安装地址 10 分钟内有效。';
+  } catch (e) {
+    status.textContent = '许可验证失败：' + e.message;
+    document.getElementById('installer').style.display = 'none';
+  }
+};
 
 let port, reader, writer, lineBuf = '';
 
