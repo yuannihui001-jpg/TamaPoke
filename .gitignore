@@ -17,3 +17,5 @@ tools/pmd_cache/
 
 # Local Cloudflare authorization material; never publish these files.
 cloudflare/*.local.txt
+cloudflare/*.tmp
+web/firmware/tamapoke-2.27.0-*.bin
