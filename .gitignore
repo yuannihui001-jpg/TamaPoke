@@ -19,3 +19,4 @@ tools/pmd_cache/
 cloudflare/*.local.txt
 cloudflare/*.tmp
 web/firmware/tamapoke-2.27.0-*.bin
+releases/2.27.0-strict-authorized/old-public/
