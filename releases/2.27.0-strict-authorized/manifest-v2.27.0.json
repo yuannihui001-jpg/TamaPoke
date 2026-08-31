@@ -1,0 +1,13 @@
+{
+  "name": "TamaPoke",
+  "version": "2.27.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "https://tamapoke-license.yuannihui001.workers.dev/v1/install", "offset": 0 }
+      ]
+    }
+  ]
+}
