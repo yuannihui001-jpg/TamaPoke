@@ -956,6 +956,8 @@ void onSwipeV(int dir) {
   if (pet.awaitingStarter()) return;  // bloqueado durante la eleccion de inicial
   if (pet.ceremony) return;
   if (dir < 0) {  // 向上滑动：返回当前页面的上一级
+    if (wifiPickerOpen) { wifiPickerOpen = false; return; }
+    if (kbOpen && kbMode) { kbOpen = false; clockOpen = true; return; }
     if (clockOpen) { clockOpen = false; return; }
     if (shopOpen) {
       if (shopDetailOpen) { shopDetailOpen = false; economyMsgUntil = 0; return; }
@@ -983,7 +985,6 @@ void onSwipeV(int dir) {
       cardOpen = true;
       return;
     }
-    if (wifiPickerOpen) { wifiPickerOpen = false; return; }
     if (cardOpen) { cardOpen = false; return; }
     if (!pet.isEgg() && !confirmUntil && !feedMenuUntil && !toyMenuUntil) {
       cardOpen = true;
