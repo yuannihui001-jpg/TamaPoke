@@ -70,11 +70,11 @@ def main():
         out.append(f'  {{ "{display}", {evo}, {lvl}, {rar}, 0x{acc:04X}, {hp}, {atk}, {df}, {spe}, {bio} }},  // {num} {typ}\n')
     out.append("};\n\n")
 
-    # Solo FR y DE tienen nombre propio en gen 1; ES/IT/PT usan el ingles.
+    # FR, DE y ZH tienen nombre propio; ES/IT/PT usan el ingles.
     out.append(
-        "// Nombres oficiales de FR y DE (en gen 1 son los unicos que difieren del\n"
-        "// ingles; ES/IT/PT usan el de DEX_TBL). nullptr = sin nombre propio.\n")
-    for lg in ('fr', 'de'):
+        "// Nombres localizados oficiales de FR, DE y ZH; ES/IT/PT usan el de\n"
+        "// DEX_TBL. nullptr = sin nombre propio.\n")
+    for lg in ('fr', 'de', 'zh'):
         out.append(f"static const char *const DEX_NAME_{lg.upper()}[DEX_COUNT + 1] = {{\n")
         fila = []
         for num in range(0, 152):
@@ -93,6 +93,7 @@ def main():
         "  if (dex < 1 || dex > DEX_COUNT) return DEX_TBL[0].name;\n"
         "  const char *n = (gLang == LANG_FR)   ? DEX_NAME_FR[dex]\n"
         "                  : (gLang == LANG_DE) ? DEX_NAME_DE[dex]\n"
+        "                  : (gLang == LANG_ZH) ? DEX_NAME_ZH[dex]\n"
         "                                       : nullptr;\n"
         "  return n ? n : DEX_TBL[dex].name;\n"
         "}\n\n")
@@ -105,7 +106,8 @@ def main():
     print(f"bases: {c['R_COMUN']} comunes, {c['R_RARO']} raras, {c['R_LEGENDARIO']} legendarias, {c['R_EVO']} solo-evolucion")
 
     path = os.path.join(os.path.dirname(__file__), '..', 'dex.h')
-    open(path, 'w').write(''.join(out))
+    with open(path, 'w', encoding='utf-8', newline='') as f:
+        f.write(''.join(out))
     print(f"guardado {os.path.normpath(path)} ({len(DEX)} especies)")
 
 

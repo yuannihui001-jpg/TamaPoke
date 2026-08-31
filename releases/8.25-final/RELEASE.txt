@@ -1,0 +1,10 @@
+TamaPoke 固件版本登记
+
+用户名称：8.25最后版
+程序版本：2.25-pet-picker
+登记日期：2026-08-25
+
+固件文件：tamapoke-8.25-final.bin
+SHA256：8F8B1AD4A25EEA2C4673DE3A0318E76E87014CBD62E420AC414EE90E89F9E5CB
+
+此目录包含可直接刷写的 ESP32-S3 合并固件，以及对应的核心源码快照。

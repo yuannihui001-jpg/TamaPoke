@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TamaPoke · Installer</title>
+<title>TamaPoke 中文固件安装器</title>
 <style>
   :root { --bg:#f2efe1; --ink:#2a2a36; --accent:#4f93c4; --ok:#58b868; --bad:#e8503a; --track:#d8d2bd; }
   * { box-sizing: border-box; }
@@ -35,54 +35,49 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🐢 TamaPoke</h1>
-  <p class="sub">A 151-Pokémon tamagotchi for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
-     Install it from your browser — no Arduino, no drivers.</p>
+  <h1>🐢 TamaPoke 中文固件</h1>
+  <p class="sub">适用于微雪 ESP32-S3-Touch-AMOLED-1.75。使用电脑 Chrome 选择串口后即可安装，无需 Arduino。</p>
+  <p class="note">请使用 USB-C 数据线，并从 <code>http://localhost</code> 或 HTTPS 地址打开本页；直接双击 HTML 文件会被浏览器禁止访问串口。</p>
 
   <p class="unsupported" id="unsupported">
-    ⚠️ Your browser doesn't support Web Serial. Use <b>Chrome</b> or <b>Edge</b> on a computer.
+    ⚠️ 当前浏览器不支持串口安装，请使用电脑端 <b>Chrome</b> 或 <b>Edge</b>。
   </p>
 
-  <h2><span class="num">1</span>Flash the firmware</h2>
+  <h2><span class="num">1</span>安装中文固件</h2>
   <div class="step">
-    <p>Plug the board in via USB and press install. Pick the port and wait.</p>
+    <p>用 USB-C 数据线连接开发板，点击下面的按钮，选择开发板对应的串口并等待完成。</p>
     <esp-web-install-button manifest="manifest.json">
-      <button slot="activate">⚡ Install TamaPoke</button>
-      <span slot="unsupported">Browser not supported (use Chrome/Edge).</span>
-      <span slot="not-allowed">Needs HTTPS.</span>
+      <button slot="activate">⚡ 选择串口并安装中文固件</button>
+      <span slot="unsupported">浏览器不支持，请使用电脑端 Chrome 或 Edge。</span>
+      <span slot="not-allowed">请通过 HTTPS 或 localhost 打开本页面。</span>
     </esp-web-install-button>
-    <p class="note">🔄 <b>Updating to a new version? Install <u>without</u> erasing</b> to keep
-       your Pokémon — the save lives in flash and the sprites on the microSD, so a normal
-       install keeps both. Only a full <b>Erase</b> wipes your saved pet (the SD sprites
-       survive even that). First time on a fresh board? You can erase, no problem.</p>
+    <p class="note">🔄 已经在使用旧版本时，建议选择“不擦除”以保留宠物存档。第一次安装或需要彻底重置时才选择“擦除设备”。</p>
   </div>
 
-  <h2><span class="num">2</span>Load the sprites onto the microSD</h2>
+  <h2><span class="num">2</span>加载精灵资源到 microSD</h2>
   <div class="step">
-    <p>Put a microSD into the board (it formats itself). Press <b>Connect board</b>
-       and then <b>Load sprites</b>: they download and copy over USB automatically
-       (~40 MB, a few minutes). Don't remove the card.</p>
-    <p class="note">Close the step-1 install tab first (only one program can use
-       the port at a time).</p>
+    <p>插入 microSD 卡后点击“连接开发板”，再点击“加载精灵”。资源会通过 USB 自动写入（约 42 MB，需要几分钟），期间不要拔卡。</p>
+    <p class="note">加载资源前请先关闭第 1 步的安装弹窗或页面，因为同一时间只能有一个程序占用串口。</p>
     <div class="row">
-      <button id="connect">🔌 Connect board</button>
-      <button id="auto" disabled>⬇️ Load sprites</button>
+      <button id="connect">🔌 连接开发板</button>
+      <button id="auto" disabled>⬇️ 加载精灵</button>
     </div>
-    <p class="note">Have your own <code>.bin</code> files? <label style="cursor:pointer;text-decoration:underline">pick them manually<input id="files" type="file" accept=".bin" multiple disabled hidden></label></p>
-    <p class="note">🎨 Want to make your own sprites? See <a href="https://github.com/socquique/TamaPoke#generate-and-load-the-sprites-yourself" target="_blank">how to generate &amp; load them</a> in the repo.</p>
+    <p class="note">有自己的 <code>.bin</code> 文件？<label style="cursor:pointer;text-decoration:underline">手动选择文件<input id="files" type="file" accept=".bin" multiple disabled hidden></label></p>
+    <p class="note">🎨 自定义精灵制作方法见 <a href="https://github.com/socquique/TamaPoke#generate-and-load-the-sprites-yourself" target="_blank">项目说明</a>。</p>
     <div class="bar" id="bar"><div></div></div>
     <pre id="log"></pre>
   </div>
 
-  <h2>How to play</h2>
-  <p>Care for your egg until it hatches, feed it, play, train it and complete them
-     all. Tap the creature to pet it; swipe to open the Pokédex (sideways), the
-     stat card (up) or set the clock (down); the physical PWR button turns the
-     screen off (short press) or everything off (long press).
-     More in the <a href="https://github.com/socquique/TamaPoke" target="_blank">repository</a>.</p>
+  <h2><span class="num">3</span>Wi-Fi 与在线更新</h2>
+  <div class="step">
+    <p>先用串口监视器发送 <code>WIFI 家庭WiFi密码</code> 格式的命令保存网络（名称和密码之间留一个空格），然后在设备下滑设置页点击“连接 WiFi”。连接成功后点击“更新”，设备会从 TamaPoke 在线固件通道下载应用更新并自动重启。</p>
+    <p class="note">完整刷写仍建议使用第 1 步的 USB 安装；在线更新只替换应用分区，不会覆盖宠物存档和 microSD 精灵资源。在线更新地址已固定为 <code>socquique.github.io/TamaPoke/web/firmware/tamapoke-app.bin</code>，发布新版本时将新的应用镜像放到该路径即可。</p>
+  </div>
 
-  <p class="note">Sprites from <a href="https://github.com/PMDCollab/SpriteCollab" target="_blank">PMD SpriteCollab</a> (CC BY-NC).
-     Pokémon is a ™ of Nintendo / Game Freak. Non-commercial project.</p>
+  <h2>开始游玩</h2>
+  <p>照顾你的宠物直到孵化，喂食、玩耍、训练并完成图鉴。点击宠物可以抚摸；向右滑动打开图鉴，点击精灵查看生命、战斗力、食量、性格和便便燃料进度，并可选择当前饲养伙伴。图鉴底部只保留返回箭头。主页顶部可进入仓库，世界入口可进入六类商店：食品、玩具、药品、装备、道具和旅游；每类 20 项商品，点击商品后先看介绍，再选择数量确认购买，已购内容进入仓库。食品包含水果、汉堡、三明治、面包、蛋糕和布丁；药品按健康、清洁、能量症状生效；装备提升攻击、防御或免疫；道具解锁可布置的可爱小屋和场景物件；玩具使用后提升开心度；旅游需要收集 30 个便便燃料，商店可预览景点，仓库出发后播放 10 秒旅行动画并补满状态。家、公园、海滩和森林都可免费前往；弹球、记忆、力量训练和野外战斗都能获得金币。下滑设置可调节亮度和音量，睡眠时屏幕进入零亮度省电模式，触摸只会短暂微亮，点击月亮图标才会唤醒。更多内容见 <a href="https://github.com/socquique/TamaPoke" target="_blank">项目仓库</a>。</p>
+
+  <p class="note">精灵资源来自 <a href="https://github.com/PMDCollab/SpriteCollab" target="_blank">PMD SpriteCollab</a>（CC BY-NC）。Pokémon 为 Nintendo / Game Freak 的商标，本项目仅供非商业使用。</p>
 </div>
 
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
@@ -157,7 +152,7 @@ async function sendAll(items) {
     done++;
     fill.style.width = (done / items.length * 100) + '%';
   }
-  log(`Done (${done - fail}/${items.length}). Restart the board (PWR button).`);
+  log(`完成：${done - fail}/${items.length}。请按 PWR 键重启开发板。`);
 }
 
 document.getElementById('connect').onclick = async () => {
@@ -167,25 +162,25 @@ document.getElementById('connect').onclick = async () => {
     reader = port.readable.getReader();
     writer = port.writable.getWriter();
     lineBuf = '';
-    log('Connected. Press "Load sprites".');
+    log('已连接，请点击“加载精灵”。');
     document.getElementById('auto').disabled = false;
     document.getElementById('files').disabled = false;
     document.getElementById('connect').disabled = true;
-  } catch (e) { log('Could not connect: ' + e.message); }
+  } catch (e) { log('连接失败：' + e.message); }
 };
 
 document.getElementById('auto').onclick = async () => {
-  if (!writer) { log('Connect the board first.'); return; }
+  if (!writer) { log('请先连接开发板。'); return; }
   document.getElementById('auto').disabled = true;
-  log('Downloading sprite bundle (~58 MB)...');
+  log('正在下载精灵资源（约 42 MB）……');
   let items;
   try {
     // sprites.pak servido desde el mismo origen (GitHub Pages) -> sin lios de CORS
     const resp = await fetch('sprites.pak');
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     items = parsePak(await resp.arrayBuffer());
-  } catch (e) { log('Could not download sprites.pak: ' + e.message); return; }
-  log(`${items.length} sprites. Sending over USB...`);
+  } catch (e) { log('下载 sprites.pak 失败：' + e.message); return; }
+  log(`共 ${items.length} 个精灵，正在通过 USB 写入……`);
   await sendAll(items);
 };
 
@@ -193,7 +188,7 @@ document.getElementById('files').onchange = async (ev) => {
   const files = [...ev.target.files];
   const items = [];
   for (const f of files) items.push({ name: 'mons/' + f.name, data: new Uint8Array(await f.arrayBuffer()) });
-  log(`${items.length} files. Sending...`);
+  log(`共 ${items.length} 个文件，正在发送……`);
   await sendAll(items);
 };
 </script>

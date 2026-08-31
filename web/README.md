@@ -1,5 +1,8 @@
 # TamaPoke web installer
 
+中文用户可直接阅读 [`README_中文安装.md`](README_中文安装.md)，Windows 上双击
+`start_installer.bat` 即可启动本地安装页面。
+
 A one-click page that flashes the firmware and loads the sprites from the browser
 (Chrome/Edge), with no Arduino or drivers. It uses
 [ESP Web Tools](https://esphome.github.io/esp-web-tools/) to flash and **Web

@@ -3,9 +3,9 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://socquique.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v1.2-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v2.11--zh--battle--catch-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
-![Languages](https://img.shields.io/badge/languages-6-FFCB05)
+![Languages](https://img.shields.io/badge/languages-7-FFCB05)
 [![Stars](https://img.shields.io/github/stars/socquique/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/socquique/TamaPoke/stargazers)
 
 A gen-1-Pokémon-inspired tamagotchi for the
@@ -27,8 +27,11 @@ behind a decision dialog), bred-Pokédex with gallery, battle stats (genes +
 training), retention hooks (streak / bond / medals / name), biome + real-time
 backgrounds, ball minigame, training bag, animated bath, RTC with offline
 progression, battery (AXP2101) and PWR button, anti-burn-in dimming,
-**sound (ES8311)**, **6 UI languages (English default)**, **starter choice on
-first run**, and a one-click **web installer**.
+**sound (ES8311)**, **TamaPetchi-style health**, **4×4 memory game**, **7 UI languages (Simplified Chinese default)**, **starter choice on
+first run**, **coins with home/park/beach/forest scenes**, **shop items (meal, toy,
+medicine, beach pass)**, **room landmarks and placeable toys**, and a one-click
+**web installer**. Room travel is free; the shop toy unlock chain now includes
+ball, flowers, tent, lamp, drum, blocks, train and kite.
 
 Pending: wild encounters / battle (designed, not implemented), 3D case, soak
 test. See **Roadmap**.
@@ -202,7 +205,12 @@ If one bottoms out it counts as a *slip-up*.
 
 **Touch gestures:**
 - Tap the creature = pet it (+happiness, bond).
-- Horizontal swipe = open the **Pokédex / gallery**.
+- Swipe right = open the **Pokédex / gallery**; swipe left/right inside the gallery = change pages, and tap the bottom **Shop** button to open the shop; swipe left on the home screen = open the **games** menu.
+- Tap the top status bar = enter the **world**. Choose home, park, beach or
+  forest for free; open **Decorate** to place owned balls, flowers, tents,
+  lamps, drums, blocks, trains and kites.
+- Buying **TOY** in the shop unlocks the next decoration, and each room saves
+  its own placed/removed state.
 - Vertical swipe up = open the **stat card** (4 pages: Profile / Battle / Medals /
   Progress; swipe between them; tap the name on Profile to rename; on Battle the
   "Train strength" button opens the bag).
@@ -248,8 +256,8 @@ thumbnails (`SdThumbs`). `SdMon` (TPK1) remains as a dormant legacy fallback onl
 background biome), evolution line with gen-1 levels, rarities and starters.
 `tools/dex_stats.py` has the real base stats (from PokéAPI). `tools/gen_names.py`
 pulls the **official localized names** from PokéAPI into `tools/dex_names.py`
-(only French and German differ in gen 1; Spanish, Italian and Portuguese use the
-English ones). `gen_dex.py` emits `dex.h` (the `DEX_TBL[152]` table plus the
+(French, German and Simplified Chinese are localized; Spanish, Italian and
+Portuguese use the English ones). `gen_dex.py` emits `dex.h` (the `DEX_TBL[152]` table plus the
 per-language name tables and the `dexName()` accessor). The pet's identity is its
 Pokédex number (persisted in NVS).
 
@@ -293,11 +301,13 @@ The egg rolls rarity over the ~79 base forms (47 common / 27 rare / 5 legendary)
 a farewell and punished by a runaway. Legendaries only with 25+ registered.
 **Shiny** 1/48 (better with streak/bond/farewell).
 
-**Languages:** the UI ships in 6 languages — English (default), Spanish, French,
-German, Italian, Portuguese — switchable from the settings screen (swipe down).
-**Pokémon names are localized too**: French and German show the official names
-(Bulbizarre, Bisasam...); the other languages use the English ones, which is what
-those regions officially use for gen 1.
+**Languages:** the UI ships in 7 languages — Simplified Chinese (default), English,
+Spanish, French, German, Italian, Portuguese — switchable from the settings screen
+(swipe down). Chinese text uses a compact firmware-resident 25x25 bitmap font, so
+the extra language does not require an additional runtime font library.
+**Pokémon names are localized too**: French, German and Simplified Chinese show
+their localized names (妙蛙种子, Bulbasaur's Chinese name); Spanish, Italian and
+Portuguese continue to use the base English names.
 
 ## Backgrounds: biome + real time
 
@@ -312,7 +322,10 @@ beach, forest, volcano, mountain, snow). Sleeping forces night.
 - `sdmon.h` / `sdmon.cpp` — TPK1 (animated) and TPK2 (PMD) sprites + thumbnails, and file reception over USB (PUT/LS)
 - `rtcbat.h` / `rtcbat.cpp` — PCF85063 RTC + AXP2101 PMU (battery, brightness, PWR button)
 - `audio.h` / `audio.cpp` — ES8311 + I2S + Game-Boy-style tone synth (non-blocking task)
-- `i18n.h` / `i18n.cpp` — the 6-language string tables
+- `i18n.h` / `i18n.cpp` — the 7-language string tables (Chinese is default)
+- `cn_canvas.h` / `cn_font.h` — UTF-8-aware canvas and 25x25 Chinese glyphs
+- `tools/gen_cn_font.py` — regenerates `cn_font.h` from the Chinese UI strings
+  (use an installed open Noto Sans CJK font with `--font` when regenerating)
 - `dex.h` — GENERATED (`gen_dex.py`): the 151 table
 - `species.h` — GENERATED (`sprites.py`): fallback sprites, UI icons, colours
 - `pin_config.h` — the board's official pins

@@ -12,10 +12,6 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Preferences.h>
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <HTTPClient.h>
-#include <Update.h>
 #include "Arduino_GFX_Library.h"
 #include "TouchDrvCSTXXX.hpp"
 #include "pin_config.h"
@@ -32,7 +28,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "2.26.0"
+#define FW_VERSION "2.25-pet-picker"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -128,12 +124,6 @@ uint32_t sleepTouchUntil = 0;
 uint8_t brightnessSetting = 180;
 uint8_t volumeLevel = 1;
 uint8_t touchSensitivity = 55; // gesture threshold in pixels; lower is more sensitive
-bool wifiConnecting = false;
-uint32_t wifiConnectStarted = 0;
-uint32_t wifiNoticeUntil = 0;
-char wifiNotice[48] = "";
-// 将最新 app 分区镜像放到这个公开地址后，设置页的“更新”即可 OTA。
-static const char *const UPDATE_BIN_URL = "https://socquique.github.io/TamaPoke/web/firmware/tamapoke-app.bin";
 
 // minijuego "toques": mantener la pokeball en el aire
 bool gameOpen = false;
@@ -292,9 +282,6 @@ void renderTravel();
 void renderDecor();
 void renderWarehouse();
 void warehouseTap(int16_t x, int16_t y);
-void serviceWifi();
-void startWifiConnection();
-void onlineUpdate();
 void drawWorldBadge();
 void startBattle();
 void battleTap(int16_t x, int16_t y);
@@ -415,7 +402,6 @@ void loop() {
 
   handleTouch();
   handleSerial();
-  serviceWifi();
   ensureMon();
 
   // pulsacion corta del PWR: pantalla on/off
@@ -484,86 +470,6 @@ void updateBrightness(uint32_t now) {
   }
 }
 
-static void setWifiNotice(const char *msg, uint32_t ms = 5000) {
-  strncpy(wifiNotice, msg ? msg : "", sizeof(wifiNotice) - 1);
-  wifiNotice[sizeof(wifiNotice) - 1] = 0;
-  wifiNoticeUntil = millis() + ms;
-}
-
-void startWifiConnection() {
-  String ssid = uiPrefs.getString("ssid", "");
-  String pass = uiPrefs.getString("pass", "");
-  if (!ssid.length()) {
-    setWifiNotice("请串口设置 WIFI 名称和密码");
-    Serial.println("请发送: WIFI <SSID> <PASSWORD>");
-    return;
-  }
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(false);
-  WiFi.begin(ssid.c_str(), pass.c_str());
-  wifiConnecting = true;
-  wifiConnectStarted = millis();
-  setWifiNotice("正在连接 WiFi...", 12000);
-}
-
-void serviceWifi() {
-  if (!wifiConnecting) return;
-  wl_status_t status = WiFi.status();
-  if (status == WL_CONNECTED) {
-    wifiConnecting = false;
-    String msg = String("WiFi 已连接 ") + WiFi.localIP().toString();
-    setWifiNotice(msg.c_str(), 8000);
-    return;
-  }
-  if (millis() - wifiConnectStarted > 12000) {
-    wifiConnecting = false;
-    WiFi.disconnect(false);
-    setWifiNotice("WiFi 连接超时");
-  }
-}
-
-void onlineUpdate() {
-  if (WiFi.status() != WL_CONNECTED) {
-    setWifiNotice("请先连接 WiFi");
-    return;
-  }
-  setWifiNotice("正在下载更新，请勿断电", 30000);
-  Serial.printf("OTA %s\n", UPDATE_BIN_URL);
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  if (!http.begin(client, UPDATE_BIN_URL)) {
-    setWifiNotice("更新地址无法打开");
-    return;
-  }
-  int code = http.GET();
-  if (code != HTTP_CODE_OK) {
-    Serial.printf("OTA HTTP %d\n", code);
-    http.end();
-    setWifiNotice("在线更新失败");
-    return;
-  }
-  int total = http.getSize();
-  if (total <= 0 || !Update.begin((size_t)total)) {
-    http.end();
-    setWifiNotice("更新空间不足");
-    return;
-  }
-  WiFiClient *stream = http.getStreamPtr();
-  size_t written = Update.writeStream(*stream);
-  bool ok = written == (size_t)total && Update.end(true) && Update.isFinished();
-  http.end();
-  if (!ok) {
-    Serial.printf("OTA 写入失败 %u/%u\n", (unsigned)written, (unsigned)total);
-    setWifiNotice("在线更新失败");
-    return;
-  }
-  setWifiNotice("更新完成，正在重启", 2000);
-  delay(500);
-  ESP.restart();
-}
-
 // ---------- consola serie (provision de SD + depuracion) ----------
 
 void handleSerial() {
@@ -571,34 +477,6 @@ void handleSerial() {
   String line = Serial.readStringUntil('\n');
   line.trim();
   if (line.length() == 0) return;
-  if (line.startsWith("WIFI ")) {
-    String args = line.substring(5);
-    int split = args.indexOf(' ');
-    if (split <= 0) {
-      Serial.println("用法: WIFI <SSID> <PASSWORD>");
-      return;
-    }
-    String ssid = args.substring(0, split);
-    String pass = args.substring(split + 1);
-    uiPrefs.putString("ssid", ssid);
-    uiPrefs.putString("pass", pass);
-    Serial.printf("WiFi 凭据已保存: %s\n", ssid.c_str());
-    startWifiConnection();
-    return;
-  }
-  if (line == "WIFIOFF") {
-    wifiConnecting = false;
-    WiFi.disconnect(true);
-    setWifiNotice("WiFi 已关闭");
-    Serial.println("DONE");
-    return;
-  }
-  if (line == "WIFISTATUS") {
-    Serial.printf("wifi=%d ssid=%s ip=%s\n", WiFi.status() == WL_CONNECTED,
-                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
-    Serial.println("DONE");
-    return;
-  }
   if (sdSerialCommand(line)) return;
 
   if (line == "HATCH") {
@@ -858,9 +736,9 @@ void onSwipe(int dir) {
     }
     return;
   }
-  if (cardOpen) {  // dentro de la ficha: cambiar entre las 5 paginas
+  if (cardOpen) {  // dentro de la ficha: cambiar entre las 4 paginas
     int p = (int)cardPage + (dir > 0 ? -1 : 1);  // izquierda avanza
-    cardPage = p < 0 ? 0 : (p > 4 ? 4 : p);
+    cardPage = p < 0 ? 0 : (p > 3 ? 3 : p);
     return;
   }
   if (!galleryOpen) {
@@ -972,9 +850,6 @@ void onTap(int16_t x, int16_t y) {
     else if (cardPage == 1 && y >= 318 && y <= 366 && x >= 96 && x <= 370) {
       cardOpen = false;            // boton ENTRENAR FUERZA
       startSack();
-    } else if (cardPage == 4 && y >= 78 && y <= 360) {
-      uint8_t slot = (uint8_t)((y - 78) / 54);
-      if (slot < EQUIP_SLOT_COUNT) pet.unequipSlot(slot);
     } else {
       cardOpen = false;
     }
@@ -2791,9 +2666,6 @@ void warehouseTap(int16_t x, int16_t y) {
             pet.joy = pet.energy = pet.health = 100;
             travelSlot = slot; travelUntil = millis() + 10000; travelOpen = true;
           } else economyNotice(false);
-        } else if (shopPage == SHOP_CAT_EQUIPMENT) {
-          // 装备必须显式点击“装备”，购买后的物品会一直留在仓库。
-          economyNotice(pet.equipShopProduct(slot));
         } else economyNotice(pet.useShopProduct(shopPage, slot));
         return;
       }
@@ -2840,17 +2712,10 @@ void renderWarehouse() {
       gfx->fillRoundRect(x, y, 196, 34, 8, C565(0xe6, 0xea, 0xef));
       gfx->setTextColor(UI_INK);
       gfx->setTextSize(1);
-      drawProductIcon(shopPage, slot, x + 22, y + 17, 1);
-      gfx->setCursor(x + 44, y + 6);
+      gfx->setCursor(x + 8, y + 6);
       gfx->print(SHOP_PRODUCTS[shopPage][slot].name);
-      if (shopPage == SHOP_CAT_EQUIPMENT) {
-        gfx->setTextColor(UI_BAR_OK);
-        gfx->setCursor(x + 148, y + 20);
-        gfx->print("装备");
-      } else {
-        char qty[8]; snprintf(qty, sizeof(qty), "x%u", (unsigned)pet.warehouseCount(shopPage, slot));
-        gfx->setCursor(x + 160, y + 9); gfx->print(qty);
-      }
+      char qty[8]; snprintf(qty, sizeof(qty), "x%u", (unsigned)pet.warehouseCount(shopPage, slot));
+      gfx->setCursor(x + 160, y + 9); gfx->print(qty);
     }
   }
   gfx->setTextSize(1);
@@ -3100,45 +2965,8 @@ void renderClock() {
   gfx->setCursor(LANG_PILL_X + (LANG_PILL_W - uiTextWidth(lp, 6)) / 2, LANG_PILL_Y + 7);
   gfx->print(lp);
 
-  bool wifiOk = WiFi.status() == WL_CONNECTED;
-  gfx->fillRoundRect(42, 350, 118, 40, 10, wifiOk ? UI_BAR_OK : UI_WHITE);
-  gfx->drawRoundRect(42, 350, 118, 40, 10, UI_INK);
-  gfx->setTextColor(wifiOk ? UI_BG_DAY : UI_INK);
-  gfx->setTextSize(1);
-  const char *wifiLabel = wifiOk ? "WiFi 已连" : "连接 WiFi";
-  gfx->setCursor(42 + (118 - uiTextWidth(wifiLabel, 6)) / 2, 364);
-  gfx->print(wifiLabel);
-
-  gfx->fillRoundRect(176, 350, 114, 40, 10, UI_BAR_OK);
+  gfx->fillRoundRect(133, 350, 200, 40, 12, UI_BAR_OK);
   gfx->setTextColor(UI_BG_DAY);
-  gfx->setTextColor(UI_BG_DAY);
-  gfx->setTextSize(2);
-  gfx->setCursor(176 + (114 - uiTextWidth("确定", 6)) / 2, 362);
-  gfx->print("确定");
-
-  gfx->fillRoundRect(304, 350, 118, 40, 10, C565(0x3c,0x78,0xc2));
-  gfx->setTextColor(UI_WHITE);
-  gfx->setTextSize(2);
-  gfx->setCursor(304 + (118 - uiTextWidth("更新", 6)) / 2, 362);
-  gfx->print("更新");
-
-  gfx->setTextColor(UI_TRACK);
-  gfx->setTextSize(1);
-  if (wifiNoticeUntil && millis() < wifiNoticeUntil) {
-    gfx->setCursor(CX - uiTextWidth(wifiNotice, 6) / 2, 402);
-    gfx->print(wifiNotice);
-  }
-  // 版本号固定在设置页底部，更新按钮位于其上方。
-  char ver[20];
-  snprintf(ver, sizeof(ver), "v%s", FW_VERSION);
-  gfx->setCursor(CX - uiTextWidth(ver, 6) / 2, 428);
-  gfx->print(ver);
-
-  gfx->setTextColor(UI_TRACK);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - uiTextWidth("上滑返回", 6) / 2, 448);
-  gfx->print("上滑返回");
-  /*
   gfx->setTextSize(3);
   gfx->setCursor(CX - 18, 360);
   gfx->print("OK");
@@ -3148,7 +2976,11 @@ void renderClock() {
   gfx->setCursor(CX - uiTextWidth(T(S_CLOCK_CANCEL), 6) / 2, 408);
   gfx->print(T(S_CLOCK_CANCEL));
 
-  */
+  // version del firmware (discreta, abajo del todo)
+  const char *ver = "v2.19";
+  gfx->setTextSize(1);
+  gfx->setCursor(CX - uiTextWidth(ver, 3) / 2, 440);
+  gfx->print(ver);
   gfx->flush();
 }
 
@@ -3197,11 +3029,7 @@ void clockTap(int16_t x, int16_t y) {
       return;
     }
   }
-  if (y >= 346 && y <= 398) {
-    if (x >= 42 && x < 160) { startWifiConnection(); return; }
-    if (x >= 176 && x < 290) { applyClock(); return; }
-    if (x >= 304 && x <= 430) { onlineUpdate(); return; }
-  }
+  if (y >= 346 && y <= 398 && x >= 120 && x <= 346) { applyClock(); return; }
 }
 
 // llama + numero de racha arriba a la izquierda
@@ -3422,57 +3250,6 @@ void renderCardProgress() {
   gfx->setTextSize(3);
   gfx->setCursor(CX - uiTextWidth(ms, 9) / 2, 310);
   gfx->print(ms);
-
-  static const char *const tiers[5] = { "新手", "成长", "精英", "大师", "传奇" };
-  char promo[40];
-  if (pet.promotionTier() >= 4) snprintf(promo, sizeof(promo), "晋升 %s", tiers[pet.promotionTier()]);
-  else snprintf(promo, sizeof(promo), "晋升 %s  下阶 %u级", tiers[pet.promotionTier()], pet.nextPromotionLevel());
-  gfx->setTextColor(UI_BAR_BAD);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - uiTextWidth(promo, 6) / 2, 348);
-  gfx->print(promo);
-}
-
-static const char *const EQUIP_LABELS[EQUIP_SLOT_COUNT] = {
-  "头盔", "护甲", "鞋子", "左手武器", "右手武器"
-};
-
-void renderCardEquipment() {
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(3);
-  gfx->setCursor(CX - uiTextWidth("装备", 9) / 2, 32);
-  gfx->print("装备");
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - uiTextWidth("点击已装备物品可卸下", 6) / 2, 66);
-  gfx->print("点击已装备物品可卸下");
-  for (uint8_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
-    int y = 80 + i * 54;
-    gfx->drawRoundRect(38, y, 390, 44, 8, UI_INK);
-    gfx->setTextColor(UI_INK);
-    gfx->setTextSize(1);
-    gfx->setCursor(52, y + 14);
-    gfx->print(EQUIP_LABELS[i]);
-    uint8_t item = pet.equippedItem(i);
-    if (item == EQUIP_EMPTY) {
-      gfx->setTextColor(UI_TRACK);
-      gfx->setCursor(228, y + 14);
-      gfx->print("空");
-      continue;
-    }
-    drawProductIcon(SHOP_CAT_EQUIPMENT, item, 164, y + 22, 1);
-    gfx->setTextColor(UI_INK);
-    gfx->setCursor(198, y + 14);
-    gfx->print(SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][item].name);
-    gfx->setTextColor(UI_BAR_BAD);
-    gfx->setCursor(354, y + 14);
-    gfx->print("卸下");
-  }
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  char bonus[48];
-  snprintf(bonus, sizeof(bonus), "攻 %u  防 %u  免疫 %u", pet.equipmentAtk, pet.equipmentDef, pet.equipmentImm);
-  gfx->setCursor(CX - uiTextWidth(bonus, 12) / 2, 346);
-  gfx->print(bonus);
 }
 
 void renderCard() {
@@ -3481,13 +3258,12 @@ void renderCard() {
   if (cardPage == 0) renderCardProfile();
   else if (cardPage == 1) renderCardStats();
   else if (cardPage == 2) renderCardMedals();
-  else if (cardPage == 3) renderCardProgress();
-  else renderCardEquipment();
+  else renderCardProgress();
 
-  // indicador de 5 paginas + ayuda
-  for (int i = 0; i < 5; i++) {
-    if (i == cardPage) gfx->fillCircle(181 + i * 26, 426, 5, UI_INK);
-    else gfx->drawCircle(181 + i * 26, 426, 4, UI_INK);
+  // indicador de 4 paginas + ayuda
+  for (int i = 0; i < 4; i++) {
+    if (i == cardPage) gfx->fillCircle(194 + i * 26, 374, 5, UI_INK);
+    else gfx->drawCircle(194 + i * 26, 374, 4, UI_INK);
   }
   gfx->flush();
 }
@@ -3733,9 +3509,7 @@ static BattleStats battleStatsForPet() {
 
 void startBattle() {
   if (!canStartWildBattle(pet.isEgg(), pet.sleeping, pet.ceremony)) return;
-  uint8_t wildPhase = pet.promotionTier();
-  if (wildPhase > 3) wildPhase = 3;
-  battleDex = pickWildSpecies((uint8_t)random(100), wildPhase);
+  battleDex = pickWildSpecies((uint8_t)random(100), 1);
   battleLevel = wildLevelFor(pet.level(), (uint8_t)random(100));
   battlePlayer = battleStatsForPet();
   battleEnemy = wildBattleStats(battleDex, battleLevel);

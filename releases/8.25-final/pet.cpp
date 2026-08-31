@@ -37,8 +37,6 @@ void Pet::newEgg() {
   careMistakes = 0;
   mistakeCooldown = 0;
   sleeping = false;
-  equipmentAtk = equipmentDef = equipmentImm = 0;
-  for (uint8_t i = 0; i < EQUIP_SLOT_COUNT; i++) equipped[i] = EQUIP_EMPTY;
   save();
 }
 
@@ -336,12 +334,7 @@ void Pet::rename(const char *name) {
 }
 
 static uint16_t calcStat(uint8_t base, uint8_t gene, uint8_t lvl, uint8_t tr) {
-  // 分段成长：等级越高，基础属性和训练转化效率都会提高，形成清晰的
-  // 1/10/25/50/100 级晋升台阶，同时保留旧存档的基因和训练值。
-  uint16_t tierBonus = lvl >= 100 ? 50 : lvl >= 50 ? 30 : lvl >= 25 ? 16 : lvl >= 10 ? 6 : 0;
-  uint16_t levelGrowth = lvl + lvl / 5;
-  uint16_t trainGrowth = tr + (uint16_t)tr * (lvl / 25) / 10;
-  return (uint16_t)base * gene / 100 + levelGrowth + tierBonus + trainGrowth;
+  return (uint16_t)base * gene / 100 + lvl + tr;
 }
 
 uint16_t Pet::atkStat() const {
@@ -716,57 +709,6 @@ bool Pet::buyShopProduct(uint8_t category, uint8_t slot) {
   return true;
 }
 
-static uint8_t equipmentSlotForItem(uint8_t slot) {
-  if (slot == 2) return EQUIP_HELMET;
-  if (slot == 3 || slot == 8 || slot == 17) return EQUIP_ARMOR;
-  if (slot == 5) return EQUIP_SHOES;
-  // 武器/护手/宝石按左右手分配；同一手再次装备会替换旧件。
-  return (slot & 1) ? EQUIP_RIGHT_HAND : EQUIP_LEFT_HAND;
-}
-
-static void applyEquipmentBonus(uint8_t slot, int sign,
-                                uint8_t &atk, uint8_t &def, uint8_t &imm) {
-  if (slot >= SHOP_ITEMS_PER_CATEGORY) return;
-  int value = (int)SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][slot].value * sign;
-  if (slot == 0 || slot == 6 || slot == 7 || slot == 10 || slot == 12 || slot == 15 || slot == 19)
-    atk = (uint8_t)constrain((int)atk + value, 0, 100);
-  else if (slot == 1 || slot == 2 || slot == 3 || slot == 8 || slot == 11 || slot == 16 || slot == 17)
-    def = (uint8_t)constrain((int)def + value, 0, 100);
-  else
-    imm = (uint8_t)constrain((int)imm + value, 0, 100);
-}
-
-bool Pet::equipShopProduct(uint8_t slot) {
-  if (ceremony != CER_NONE || isEgg() || sleeping || slot >= SHOP_ITEMS_PER_CATEGORY) return false;
-  uint8_t id = shopProductId(SHOP_CAT_EQUIPMENT, slot);
-  if (!warehouse[id]) return false;
-  uint8_t target = equipmentSlotForItem(slot);
-  uint8_t old = equipped[target];
-  if (old != EQUIP_EMPTY) {
-    uint8_t oldId = shopProductId(SHOP_CAT_EQUIPMENT, old);
-    if (warehouse[oldId] < 250) warehouse[oldId]++;
-    applyEquipmentBonus(old, -1, equipmentAtk, equipmentDef, equipmentImm);
-  }
-  warehouse[id]--;
-  equipped[target] = slot;
-  applyEquipmentBonus(slot, +1, equipmentAtk, equipmentDef, equipmentImm);
-  registerCare();
-  save();
-  return true;
-}
-
-bool Pet::unequipSlot(uint8_t equipSlot) {
-  if (ceremony != CER_NONE || isEgg() || sleeping || equipSlot >= EQUIP_SLOT_COUNT) return false;
-  uint8_t slot = equipped[equipSlot];
-  if (slot == EQUIP_EMPTY) return false;
-  uint8_t id = shopProductId(SHOP_CAT_EQUIPMENT, slot);
-  if (warehouse[id] < 250) warehouse[id]++;
-  applyEquipmentBonus(slot, -1, equipmentAtk, equipmentDef, equipmentImm);
-  equipped[equipSlot] = EQUIP_EMPTY;
-  save();
-  return true;
-}
-
 bool Pet::useShopProduct(uint8_t category, uint8_t slot) {
   if (ceremony != CER_NONE || isEgg() || sleeping || category >= SHOP_CAT_COUNT || slot >= SHOP_ITEMS_PER_CATEGORY)
     return false;
@@ -1039,7 +981,6 @@ void Pet::save() {
   prefs.putUChar("eqAtk", equipmentAtk);
   prefs.putUChar("eqDef", equipmentDef);
   prefs.putUChar("eqImm", equipmentImm);
-  prefs.putBytes("eqSlots", equipped, sizeof(equipped));
   prefs.putUChar("gatk", geneAtk);
   prefs.putUChar("gdef", geneDef);
   prefs.putUChar("gspe", geneSpe);
@@ -1113,10 +1054,6 @@ void Pet::load() {
   equipmentAtk = prefs.getUChar("eqAtk", 0);
   equipmentDef = prefs.getUChar("eqDef", 0);
   equipmentImm = prefs.getUChar("eqImm", 0);
-  for (uint8_t i = 0; i < EQUIP_SLOT_COUNT; i++) equipped[i] = EQUIP_EMPTY;
-  if (prefs.getBytes("eqSlots", equipped, sizeof(equipped)) != sizeof(equipped)) {
-    for (uint8_t i = 0; i < EQUIP_SLOT_COUNT; i++) equipped[i] = EQUIP_EMPTY;
-  }
   geneAtk = prefs.getUChar("gatk", 0);
   geneDef = prefs.getUChar("gdef", 0);
   geneSpe = prefs.getUChar("gspe", 0);

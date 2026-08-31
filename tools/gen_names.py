@@ -3,9 +3,9 @@
 
   python3 tools/gen_names.py
 
-Solo FR y DE tienen nombres propios en gen 1; ES/IT/PT usan los ingleses, asi
-que aqui se guarda unicamente lo que difiere del ingles. La fuente GFX es
-ASCII, asi que los nombres salen en mayusculas y sin acentos.
+FR, DE y ZH usan sus nombres localizados; ES/IT/PT siguen usando los ingleses.
+La fuente del firmware ZH es Unicode, mientras que las otras variantes siguen
+normalizando los nombres a ASCII.
 """
 import json
 import os
@@ -13,7 +13,7 @@ import subprocess
 import time
 import unicodedata
 
-LANGS = ('fr', 'de')
+LANGS = {'fr': 'fr', 'de': 'de', 'zh': 'zh-hans'}
 
 
 def ascii_up(s):
@@ -28,7 +28,7 @@ def fetch(num):
     url = f'https://pokeapi.co/api/v2/pokemon-species/{num}/'
     for intento in range(4):
         r = subprocess.run(['curl', '-s', '--max-time', '25', '-A', 'Mozilla/5.0', url],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding='utf-8', errors='replace')
         if r.returncode == 0 and r.stdout.strip().startswith('{'):
             return json.loads(r.stdout)
         time.sleep(1 + intento)
@@ -42,8 +42,10 @@ def main():
         names = {n['language']['name']: n['name'] for n in d['names']}
         en = ascii_up(names['en'])
         dif = {}
-        for lg in LANGS:
-            v = ascii_up(names.get(lg, names['en']))
+        for lg, api_lg in LANGS.items():
+            v = names.get(api_lg, names['en'])
+            if lg != 'zh':
+                v = ascii_up(v)
             if v != en:
                 dif[lg] = v
         if dif:
@@ -56,8 +58,8 @@ def main():
     with open(path, 'w', encoding='utf-8') as f:
         f.write('# -*- coding: utf-8 -*-\n')
         f.write('"""GENERADO por tools/gen_names.py desde PokeAPI - no editar a mano.\n\n')
-        f.write('Nombres oficiales que difieren del ingles (solo FR y DE en gen 1),\n')
-        f.write('en mayusculas y sin acentos porque la fuente GFX es ASCII.\n"""\n\n')
+        f.write('Nombres oficiales localizados de FR, DE y ZH para la Pokedex gen 1.\n')
+        f.write('FR/DE se normalizan a ASCII; ZH conserva sus caracteres Unicode.\n"""\n\n')
         f.write('LOCAL_NAMES = {\n')
         for num in sorted(out):
             f.write(f'    {num}: {out[num]!r},\n')

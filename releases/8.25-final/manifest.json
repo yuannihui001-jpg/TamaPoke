@@ -1,6 +1,6 @@
 {
   "name": "TamaPoke",
-  "version": "2.26.0",
+  "version": "2.25-pet-picker",
   "new_install_prompt_erase": true,
   "builds": [
     {

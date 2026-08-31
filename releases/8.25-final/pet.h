@@ -16,17 +16,6 @@
 #define FAREWELL_AGE_MIN (3UL * 24 * 60)   // se despide a los 3 dias de juego (en forma final)
 #define RUNAWAY_TICKS 60                   // se escapa tras 1 h con TODO a cero
 
-// 装备槽位：头盔、护甲、鞋子，以及左右手武器。
-enum PetEquipmentSlot : uint8_t {
-  EQUIP_HELMET = 0,
-  EQUIP_ARMOR,
-  EQUIP_SHOES,
-  EQUIP_LEFT_HAND,
-  EQUIP_RIGHT_HAND,
-  EQUIP_SLOT_COUNT,
-};
-#define EQUIP_EMPTY 255
-
 // ceremonias de fin de ciclo
 enum : uint8_t { CER_NONE = 0, CER_FAREWELL, CER_RUNAWAY, CER_RELEASE };
 
@@ -72,7 +61,6 @@ public:
   uint16_t propOwned = 0;   // decoracion comprada en la tienda de objetos
   uint16_t propPlaced[4] = { 0, 0, 0, 0 };
   uint8_t equipmentAtk = 0, equipmentDef = 0, equipmentImm = 0;
-  uint8_t equipped[EQUIP_SLOT_COUNT] = { EQUIP_EMPTY, EQUIP_EMPTY, EQUIP_EMPTY, EQUIP_EMPTY, EQUIP_EMPTY };
   // genes (90-110%, se tiran al eclosionar) y entrenamiento (0-100)
   uint8_t geneAtk = 100, geneDef = 100, geneSpe = 100;
   uint8_t trAtk = 0, trDef = 0, trSpe = 0;
@@ -134,11 +122,6 @@ public:
   bool buyItem(uint8_t item);
   bool buyShopProduct(uint8_t category, uint8_t slot);
   bool useShopProduct(uint8_t category, uint8_t slot);
-  bool equipShopProduct(uint8_t slot);
-  bool unequipSlot(uint8_t equipSlot);
-  uint8_t equippedItem(uint8_t equipSlot) const {
-    return equipSlot < EQUIP_SLOT_COUNT ? equipped[equipSlot] : EQUIP_EMPTY;
-  }
   bool selectSpecies(int16_t dex);
   uint8_t speciesPoops(int16_t dex);
   uint8_t poopFuelCount() const { return poopFuel; }
@@ -202,16 +185,6 @@ public:
   void factoryReset() { prefs.clear(); }  // borra la NVS (test: comando serie WIPE)
   void dbgRunawayReady() { fullness = joy = energy = hygiene = 0; neglectTicks = RUNAWAY_TICKS; }  // test
   uint8_t level() const { return 1 + ageMinutes / MINUTES_PER_LEVEL; }
-  // 晋升阶段随等级解锁，供成长页和战斗匹配使用：新手、成长、精英、大师、传奇。
-  uint8_t promotionTier() const {
-    uint8_t lv = level();
-    return lv >= 100 ? 4 : lv >= 50 ? 3 : lv >= 25 ? 2 : lv >= 10 ? 1 : 0;
-  }
-  uint8_t nextPromotionLevel() const {
-    static const uint8_t LEVELS[5] = { 1, 10, 25, 50, 100 };
-    uint8_t tier = promotionTier();
-    return tier >= 4 ? 100 : LEVELS[tier + 1];
-  }
   bool isRegistered(int16_t dex) const {
     return dex >= 1 && dex <= 151 && (dexReg[(dex - 1) >> 3] & (1 << ((dex - 1) & 7)));
   }
