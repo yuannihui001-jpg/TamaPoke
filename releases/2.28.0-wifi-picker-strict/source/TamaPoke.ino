@@ -438,7 +438,12 @@ void loop() {
     lastPwr = now;
     if (pwrShortPressed()) {
       screenOff = !screenOff;
-      if (!screenOff) lastInteract = now;
+      if (!screenOff) {
+        lastInteract = now;
+        if (pet.sleeping) sleepTouchUntil = now + 5000;  // 短按也只微亮
+      } else {
+        sleepTouchUntil = 0;
+      }
     }
   }
 
