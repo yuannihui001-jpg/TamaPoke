@@ -844,10 +844,16 @@ void performOnlineUpdate() {
   client.setInsecure();
   HTTPClient http;
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setConnectTimeout(15000);
+  http.setTimeout(30000);
   String url = String(AUTH_SERVER_URL) + "/v1/firmware";
   if (!http.begin(client, url)) {
-    setWifiNotice("更新地址无法打开");
-    return;
+    // TLS/DNS 初次恢复时可能只失败一次，重建连接后再试一次。
+    delay(150);
+    if (!http.begin(client, url)) {
+      setWifiNotice("网络连接失败，请重试");
+      return;
+    }
   }
   if (authToken.length()) http.addHeader("Authorization", String("Bearer ") + authToken);
   http.addHeader("X-TamaPoke-Device", deviceIdString());
