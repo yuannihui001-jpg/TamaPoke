@@ -1,0 +1,5 @@
+--flash-mode dio --flash-freq 80m --flash-size 16MB
+0x0 tamapoke-2.30.0-bootloader.bin
+0x8000 tamapoke-2.30.0-partitions.bin
+0xe000 boot_app0.bin
+0x10000 tamapoke-2.30.0-app.bin
