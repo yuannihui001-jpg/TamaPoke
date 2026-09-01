@@ -160,9 +160,14 @@ async function firmware(request, env, grantKind) {
   const url = new URL(request.url);
   const token = bearer(request) || url.searchParams.get("grant") || "";
   const record = await loadToken(env, token);
-  if (!record || record.kind !== grantKind) return new Response("Forbidden", { status: 403 });
+  const binaryHeaders = {
+    "content-type": "text/plain; charset=utf-8",
+    "access-control-allow-origin": "*",
+    "cache-control": "no-store",
+  };
+  if (!record || record.kind !== grantKind) return new Response("Forbidden", { status: 403, headers: binaryHeaders });
   const deviceId = deviceIdFrom(request);
-  if (grantKind === "device" && (!deviceId || record.deviceId !== deviceId)) return new Response("Forbidden", { status: 403 });
+  if (grantKind === "device" && (!deviceId || record.deviceId !== deviceId)) return new Response("Forbidden", { status: 403, headers: binaryHeaders });
   try {
     const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.31.0-merged.bin.enc" : "tamapoke-2.31.0-app.bin.enc");
     return new Response(data, {
@@ -170,11 +175,14 @@ async function firmware(request, env, grantKind) {
         "content-type": "application/octet-stream",
         "content-length": String(data.byteLength),
         "cache-control": "no-store",
+        // ESP Web Tools downloads this one-time URL from GitHub Pages.
+        "access-control-allow-origin": "*",
         "x-tamapoke-license": "verified",
+        "x-tamapoke-release": RELEASE_VERSION,
       },
     });
   } catch (error) {
-    return new Response("Firmware unavailable: " + error.message, { status: 503 });
+    return new Response("Firmware unavailable: " + error.message, { status: 503, headers: binaryHeaders });
   }
 }
 

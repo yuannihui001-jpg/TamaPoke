@@ -3,9 +3,11 @@ setlocal
 cd /d "%~dp0"
 
 where py >nul 2>nul
+if not errorlevel 1 py -c "import sys" >nul 2>nul
 if not errorlevel 1 goto :python_launcher
 
 where python >nul 2>nul
+if not errorlevel 1 python -c "import sys" >nul 2>nul
 if not errorlevel 1 goto :python_launcher_python
 
 echo 未找到 Python。请先安装 Python 3，或使用已部署的 HTTPS 网页链接。
