@@ -33,7 +33,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "2.31.0"
+#define FW_VERSION "2.32.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -120,9 +120,10 @@ int8_t wifiSelected = -1;
 uint8_t cardPage = 0;         // 0 perfil, 1 stats+medallas
 bool equipmentActionOpen = false;
 uint8_t equipmentActionSlot = 0;
-static const int EQUIP_BOX_X[5] = { 40, 238, 40, 238, 139 };
-static const int EQUIP_BOX_Y[5] = { 214, 214, 260, 260, 306 };
-static const int EQUIP_BOX_W = 188;
+// 装备槽围绕大号宠物排布，避开圆屏边缘并对应头盔、护甲、手部和鞋子。
+static const int EQUIP_BOX_X[5] = { 52, 254, 10, 296, 153 };
+static const int EQUIP_BOX_Y[5] = { 72, 72, 208, 208, 344 };
+static const int EQUIP_BOX_W = 160;
 static const int EQUIP_BOX_H = 38;
 bool clockOpen = false;       // pantalla de ajuste de hora (deslizar abajo)
 int clockH = 12, clockM = 0;  // hora en edicion
@@ -153,7 +154,7 @@ char updateVersion[16] = "";
 static const char *const AUTH_SERVER_URL = "https://tamapoke-license.yuannihui001.workers.dev";
 // 仅用于已经刷入官方固件的设备首次取得长期 OTA 令牌；浏览器安装仍必须
 // 先通过作者许可校验。该值与 Worker 的发布门槛保持一致。
-static const char *const FW_RELEASE_PROOF = "TamaPoke-2.31.0-official";
+static const char *const FW_RELEASE_PROOF = "TamaPoke-2.32.0-official";
 
 // minijuego "toques": mantener la pokeball en el aire
 bool gameOpen = false;
@@ -618,16 +619,15 @@ void renderWifiPicker() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
   gfx->setTextColor(UI_INK);
-  // 中文字形固定为 25x25；ASCII 使用 4 倍字体（约 24px），避免 WiFi、
-  // SSID 和中文在同一行时一大一小、基线不齐。
-  gfx->setTextSize(4);
+  // WiFi 页面中的拉丁字母使用约 60% 的原尺寸；中文仍保持 25x25 原生字形。
+  gfx->setTextSize(2);
   const char *title = "选择 WiFi";
-  gfx->setCursor(CX - uiTextWidth(title, 24) / 2, 34);
+  gfx->setCursor(CX - uiTextWidth(title, 12) / 2, 40);
   gfx->print(title);
   if (!wifiNetworkCount) {
-    gfx->setTextSize(4);
+    gfx->setTextSize(2);
     const char *empty = "未发现 WiFi，请重新扫描";
-    gfx->setCursor(CX - uiTextWidth(empty, 24) / 2, 180);
+    gfx->setCursor(CX - uiTextWidth(empty, 12) / 2, 180);
     gfx->print(empty);
   }
   for (uint8_t i = 0; i < wifiNetworkCount; ++i) {
@@ -635,9 +635,9 @@ void renderWifiPicker() {
     gfx->fillRoundRect(58, y, 350, 34, 8, UI_WHITE);
     gfx->drawRoundRect(58, y, 350, 34, 8, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(4);
-    String ssid = wifiLabelFit(String(wifiSsids[i]), 320, 24);
-    gfx->setCursor(CX - uiTextWidth(ssid.c_str(), 24) / 2, y + 5);
+    gfx->setTextSize(2);
+    String ssid = wifiLabelFit(String(wifiSsids[i]), 320, 12);
+    gfx->setCursor(CX - uiTextWidth(ssid.c_str(), 12) / 2, y + 4);
     gfx->print(ssid.c_str());
   }
   gfx->fillRoundRect(70, 382, 140, 40, 9, UI_WHITE);
@@ -733,6 +733,23 @@ bool bootstrapDeviceGrant() {
   return true;
 }
 
+static bool requestDeviceVersion(String &response, int &statusCode) {
+  response = "";
+  statusCode = -1;
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient check;
+  String checkUrl = String(AUTH_SERVER_URL) + "/v1/device-version";
+  if (!check.begin(client, checkUrl)) return false;
+  check.addHeader("Authorization", String("Bearer ") + authToken);
+  check.addHeader("X-TamaPoke-Device", deviceIdString());
+  check.addHeader("X-TamaPoke-Version", FW_VERSION);
+  statusCode = check.GET();
+  if (statusCode > 0) response = check.getString();
+  check.end();
+  return statusCode > 0;
+}
+
 void onlineUpdate() {
   if (WiFi.status() != WL_CONNECTED) {
     setWifiNotice("请先连接 WiFi");
@@ -746,20 +763,24 @@ void onlineUpdate() {
     return;
   }
   setWifiNotice("正在检查更新...", 12000);
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient check;
-  String checkUrl = String(AUTH_SERVER_URL) + "/v1/device-version";
-  if (!check.begin(client, checkUrl)) {
+  int checkCode = -1;
+  String checkResponse;
+  if (!requestDeviceVersion(checkResponse, checkCode)) {
+    Serial.printf("更新地址无法打开 HTTP %d\n", checkCode);
     setWifiNotice("更新地址无法打开");
     return;
   }
-  check.addHeader("Authorization", String("Bearer ") + authToken);
-  check.addHeader("X-TamaPoke-Device", deviceIdString());
-  check.addHeader("X-TamaPoke-Version", FW_VERSION);
-  int checkCode = check.GET();
-  String checkResponse = checkCode > 0 ? check.getString() : "";
-  check.end();
+  // NVS 中可能还留着旧版或过期令牌。服务端拒绝后自动清除并重新
+  // 登记，不再把已经刷入官方固件的设备误报成“未登记”。
+  if (checkCode == HTTP_CODE_FORBIDDEN) {
+    authToken = "";
+    uiPrefs.remove("auth");
+    if (!bootstrapDeviceGrant() || !requestDeviceVersion(checkResponse, checkCode)) {
+      Serial.printf("设备重新登记失败 HTTP %d ID=%s\n", checkCode, deviceIdString().c_str());
+      setWifiNotice("官方固件登记失败，请检查网络");
+      return;
+    }
+  }
   int vstart = checkResponse.indexOf("\"version\":\"");
   if (checkCode != HTTP_CODE_OK || vstart < 0) {
     Serial.printf("更新检查 HTTP %d\n", checkCode);
@@ -2413,7 +2434,7 @@ static void economyNotice(bool ok) {
   economyMsgOk = ok;
   economyMsgHasText = false;
   economyMsgText[0] = 0;
-  economyMsgUntil = millis() + 1200;
+  economyMsgUntil = millis() + 2000;
   sfxPlay(ok ? SFX_TAP : SFX_DENY);
 }
 
@@ -2422,7 +2443,7 @@ static void economyNoticeText(const char *message, bool ok) {
   economyMsgHasText = true;
   strncpy(economyMsgText, message ? message : "", sizeof(economyMsgText) - 1);
   economyMsgText[sizeof(economyMsgText) - 1] = 0;
-  economyMsgUntil = millis() + 1600;
+  economyMsgUntil = millis() + 2000;
   sfxPlay(ok ? SFX_TAP : SFX_DENY);
 }
 
@@ -2502,7 +2523,7 @@ void shopTap(int16_t x, int16_t y) {
         for (uint8_t i = 0; i < shopDetailQty && ok; i++) {
           ok = pet.buyShopProduct((uint8_t)shopCategory, shopDetailSlot);
         }
-        economyNotice(ok);
+        economyNoticeText(ok ? "购买成功" : "金币不够", ok);
         shopDetailOpen = false;
         return;
       }
@@ -3087,11 +3108,14 @@ void renderShop() {
     gfx->setTextSize(1); gfx->setCursor(CX - uiTextWidth(page, 6) / 2, 366); gfx->print(page);
   }
   if (economyMsgUntil && millis() < economyMsgUntil) {
-    gfx->fillRoundRect(112, 48, 242, 24, 8, economyMsgOk ? UI_BAR_OK : UI_BAR_BAD);
-    gfx->setTextColor(UI_WHITE);
-    gfx->setTextSize(1);
     const char *msg = economyMsgHasText ? economyMsgText : (economyMsgOk ? T(S_BOUGHT) : T(S_NOT_ENOUGH));
-    gfx->setCursor(CX - uiTextWidth(msg, 3) / 2, 82);
+    // 购买结果使用真正的居中弹窗；旧版提示文字画在色条外，容易被
+    // 圆屏裁切，也会和商品标题重叠。
+    gfx->fillRoundRect(72, 154, 322, 132, 16, UI_WHITE);
+    gfx->drawRoundRect(72, 154, 322, 132, 16, UI_INK);
+    gfx->setTextColor(economyMsgOk ? UI_BAR_OK : UI_BAR_BAD);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - uiTextWidth(msg, 6) / 2, 196);
     gfx->print(msg);
   }
   gfx->flush();
@@ -3521,9 +3545,10 @@ void renderClock() {
   gfx->fillRoundRect(58, 330, 170, 40, 10, wifiOk ? UI_BAR_OK : UI_WHITE);
   gfx->drawRoundRect(58, 330, 170, 40, 10, UI_INK);
   gfx->setTextColor(wifiOk ? UI_BG_DAY : UI_INK);
-  gfx->setTextSize(4);
+  // WiFi/SSID 中的英文缩小到原来的约 60%，避免压过中文。
+  gfx->setTextSize(2);
   const char *wifiLabel = wifiOk ? "WiFi 已连" : "连接 WiFi";
-  gfx->setCursor(58 + (170 - uiTextWidth(wifiLabel, 24)) / 2, 337);
+  gfx->setCursor(58 + (170 - uiTextWidth(wifiLabel, 12)) / 2, 337);
   gfx->print(wifiLabel);
 
   gfx->fillRoundRect(238, 330, 170, 40, 10, C565(0x3c,0x78,0xc2));
@@ -3533,11 +3558,17 @@ void renderClock() {
   gfx->setCursor(238 + (170 - uiTextWidth("更新", 24)) / 2, 337);
   gfx->print("更新");
 
-  gfx->setTextColor(UI_TRACK);
-  gfx->setTextSize(1);
-  if (wifiNoticeUntil && millis() < wifiNoticeUntil) {
-    gfx->setCursor(CX - uiTextWidth(wifiNotice, 6) / 2, 378);
-    gfx->print(wifiNotice);
+  // 网络连接、登记和更新结果使用居中弹窗，避免在圆屏底部被裁切。
+  if (wifiNoticeUntil && millis() < wifiNoticeUntil && wifiNotice[0]) {
+    String notice = wifiLabelFit(String(wifiNotice), 300, 12);
+    gfx->fillRoundRect(62, 154, 342, 128, 16, UI_WHITE);
+    gfx->drawRoundRect(62, 154, 342, 128, 16, UI_INK);
+    gfx->setTextColor(UI_INK); gfx->setTextSize(2);
+    gfx->setCursor(CX - uiTextWidth("提示", 6) / 2, 172);
+    gfx->print("提示");
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - uiTextWidth(notice.c_str(), 12) / 2, 214);
+    gfx->print(notice.c_str());
   }
   // 版本号使用更醒目的粗体中文字体，并始终在圆屏中心。
   char ver[20];
@@ -3586,6 +3617,10 @@ void renderClock() {
 }
 
 void clockTap(int16_t x, int16_t y) {
+  if (wifiNoticeUntil && millis() < wifiNoticeUntil && wifiNotice[0]) {
+    wifiNoticeUntil = 0;
+    return;
+  }
   if (y >= 88 && y <= 144) {  // fila de botones +/-
     if (x >= 112 && x < 164) clockH = (clockH + 23) % 24;
     else if (x >= 164 && x < 216) clockH = (clockH + 1) % 24;
@@ -3877,13 +3912,13 @@ static const char *const EQUIP_LABELS[EQUIP_SLOT_COUNT] = {
 };
 
 static void drawEquipmentPetPreview() {
-  // 装备页单独使用放大预览，避免和槽位文字挤在同一行。
+  // 装备页使用约 4 倍于普通详情缩略图的预览，装备槽围绕身体标注。
   if (pmd.loaded) {
-    drawPmdActM(pmd, PMD_IDLE, CX, 194, millis(), true, false, 6);
+    drawPmdActM(pmd, PMD_IDLE, CX, 330, millis(), true, false, 8);
   } else if (mon.loaded) {
-    int s = min(6, (int)mon.scale + 1);
+    int s = min(8, (int)mon.scale + 2);
     int w = mon.w * s, h = mon.h * s;
-    int x = CX - w / 2, y = 112 - h / 2;
+    int x = CX - w / 2, y = 330 - h;
     uint16_t fi = mon.frameMs ? (millis() / mon.frameMs) % mon.frames : 0;
     const uint8_t *fr = mon.data + (uint32_t)fi * mon.w * mon.h;
     for (int r = 0; r < mon.h; ++r) for (int c = 0; c < mon.w; ++c) {
@@ -3903,17 +3938,17 @@ static void drawEquipmentSlotCard(uint8_t slot) {
   uint8_t item = pet.equippedItem(slot);
   if (item == EQUIP_EMPTY) {
     gfx->setTextColor(UI_TRACK);
-    gfx->setCursor(x + EQUIP_BOX_W - 32, y + 6);
+    gfx->setCursor(x + EQUIP_BOX_W - 24, y + 6);
     gfx->print("空");
     return;
   }
-  drawProductIcon(SHOP_CAT_EQUIPMENT, item, x + 72, y + 19, 1);
+  drawProductIcon(SHOP_CAT_EQUIPMENT, item, x + 30, y + 19, 1);
   gfx->setTextColor(UI_INK);
-  String itemName = wifiLabelFit(String(SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][item].name), 50);
-  gfx->setCursor(x + 88, y + 6);
+  String itemName = wifiLabelFit(String(SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][item].name), 58);
+  gfx->setCursor(x + 48, y + 6);
   gfx->print(itemName.c_str());
   gfx->setTextColor(UI_BAR_OK);
-  gfx->setCursor(x + EQUIP_BOX_W - 56, y + 6);
+  gfx->setCursor(x + EQUIP_BOX_W - 40, y + 6);
   gfx->print("在用");
 }
 
@@ -4353,12 +4388,12 @@ static void drawBattleHpArc(uint16_t cur, uint16_t maxHp, uint16_t color, bool l
 
 static void drawBattleSprite(PmdMon &sprite, int dex, int cx, int ground) {
   if (sprite.loaded) {
-    drawPmdActM(sprite, PMD_IDLE, cx, ground, millis(), true, false, 4);
+    drawPmdActM(sprite, PMD_IDLE, cx, ground, millis(), true, false, 5);
     return;
   }
   const uint8_t *thumb = thumbs.get(dex);
   if (thumb) {
-    drawThumb(thumb, cx - 40, ground - 118, 3, false);
+    drawThumb(thumb, cx - 40, ground - 142, 4, false);
     return;
   }
   // 最后的可见后备：精灵球和轮廓，不留下黑色空区。
@@ -4370,9 +4405,9 @@ static void drawBattleSprite(PmdMon &sprite, int dex, int cx, int ground) {
 }
 
 static int battleSpriteTop(PmdMon &sprite, int ground, uint8_t maxS) {
-  if (!sprite.loaded) return ground - 118;  // thumb 后备图的固定高度
+  if (!sprite.loaded) return ground - 142;  // thumb 后备图的固定高度（放大后）
   const PmdAct &a = sprite.acts[PMD_IDLE];
-  uint8_t s = a.h ? 170 / a.h : 5;
+  uint8_t s = a.h ? 204 / a.h : 5;
   if (s < 2) s = 2;
   if (s > maxS) s = maxS;
   while (s > 2 && a.h * s > 250) s--;
@@ -4413,8 +4448,8 @@ void renderBattle() {
   if (wildX < 240) wildX = 240;
   if (mineX + mineW > 226) mineX = 226 - mineW;
   if (wildX + wildW > 452) wildX = 452 - wildW;
-  int mineY = battleSpriteTop(pmd, 286, 4) - 35;
-  int wildY = battleSpriteTop(wildPmd, 286, 4) - 35;
+  int mineY = battleSpriteTop(pmd, 286, 5) - 24;
+  int wildY = battleSpriteTop(wildPmd, 286, 5) - 24;
   if (mineY < 70) mineY = 70;
   if (wildY < 70) wildY = 70;
   gfx->setCursor(mineX, mineY); gfx->print(mine);
@@ -4841,7 +4876,9 @@ uint8_t pmdFrameAt(const PmdAct &a, uint32_t t, bool loop) {
 void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
   const PmdAct &a = m.acts[actId];
   if (!a.frames) return;
-  uint8_t sBase = m.acts[PMD_IDLE].h ? 170 / m.acts[PMD_IDLE].h : 5;
+  // 普通主页/战斗宠物放大到约 120%；装备页传入 maxS=8，再额外使用更大的目标高度。
+  uint16_t targetHeight = maxS >= 8 ? 260 : 204;
+  uint8_t sBase = m.acts[PMD_IDLE].h ? targetHeight / m.acts[PMD_IDLE].h : 5;
   if (sBase < 2) sBase = 2;
   if (sBase > maxS) sBase = maxS;
   uint8_t s = sBase;
@@ -4933,14 +4970,14 @@ void drawPetPMD() {
     if (!pmd.has(act)) act = PMD_IDLE;
   }
 
-  drawPmdAct(act, (int)beh.x, PET_GROUND, now - beh.t0, loop || act == PMD_IDLE, false, 6);
+  drawPmdAct(act, (int)beh.x, PET_GROUND, now - beh.t0, loop || act == PMD_IDLE, false, 7);
 
   if (pet.showHeart()) drawMap(SPR_HEART, 32, (int)beh.x + 50, PET_GROUND - 190, 2, false);
 }
 
 // sprite animado desde la SD: zoom entero por pixel, frames a su ritmo
 void drawPetSD() {
-    int s = min(6, (int)mon.scale + 1);
+    int s = min(7, (int)mon.scale + 2);
   int w = mon.w * s, h = mon.h * s;
   int x = CX - w / 2;
   int y = PET_CY - h / 2;

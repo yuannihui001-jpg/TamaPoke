@@ -1,5 +1,5 @@
 // TamaPoke strict license gateway.
-// Release 2.31.0: encrypted origin, device-bound tokens, and browser grants.
+// Release 2.32.0: encrypted origin, device-bound tokens, and browser grants.
 // Bind a Workers KV namespace (tomagochi or LICENSES) and add FIRMWARE_KEY as a secret.
 
 const JSON_HEADERS = {
@@ -21,8 +21,13 @@ const GRANT_TTL_SECONDS = 10 * 60;
 // updates do not ask the owner for the license again. Browser install grants
 // remain short-lived and still require the author license.
 const DEVICE_GRANT_TTL_SECONDS = 365 * 24 * 60 * 60;
-const RELEASE_VERSION = "2.31.0";
-const RELEASE_PROOF = "TamaPoke-2.31.0-official";
+const RELEASE_VERSION = "2.32.0";
+const RELEASE_PROOFS = {
+  // Keep the previous official release eligible for a one-time bootstrap so
+  // v2.31 devices can update without asking for the author license again.
+  "2.31.0": "TamaPoke-2.31.0-official",
+  "2.32.0": "TamaPoke-2.32.0-official",
+};
 
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: JSON_HEADERS });
@@ -126,7 +131,7 @@ async function deviceBootstrap(request, env) {
   const deviceId = deviceIdFrom(request);
   const version = (request.headers.get("x-tamapoke-version") || "").trim();
   const proof = (request.headers.get("x-tamapoke-release") || "").trim();
-  if (!deviceId || deviceId.length > 40 || version !== RELEASE_VERSION || proof !== RELEASE_PROOF)
+  if (!deviceId || deviceId.length > 40 || RELEASE_PROOFS[version] !== proof)
     return json({ error: "forbidden" }, 403);
   const issued = await issueGrant(env, deviceId, "device");
   return json({ token: issued.token, expiresAt: issued.exp, deviceId });
@@ -169,7 +174,7 @@ async function firmware(request, env, grantKind) {
   const deviceId = deviceIdFrom(request);
   if (grantKind === "device" && (!deviceId || record.deviceId !== deviceId)) return new Response("Forbidden", { status: 403, headers: binaryHeaders });
   try {
-    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.31.0-merged.bin.enc" : "tamapoke-2.31.0-app.bin.enc");
+    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.32.0-merged.bin.enc" : "tamapoke-2.32.0-app.bin.enc");
     return new Response(data, {
       headers: {
         "content-type": "application/octet-stream",

@@ -8,7 +8,7 @@
 2. 将 worker.js 的内容粘贴到代码编辑器并部署。
 3. 在 Worker 设置中添加 KV 绑定：当前线上变量名为 `tomagochi`，命名空间选择 TAMAPOKE_LICENSES；代码也兼容变量名 `LICENSES`。
 4. 在 Worker 的 Secrets 中添加 FIRMWARE_KEY。它必须是 32 字节 AES 密钥的 base64url 文本，不能提交到 GitHub。
-5. 将 tamapoke-2.31.0-merged.bin.enc 和 tamapoke-2.31.0-app.bin.enc 放到仓库 web/firmware/。
+5. 将 tamapoke-2.32.0-merged.bin.enc 和 tamapoke-2.32.0-app.bin.enc 放到仓库 web/firmware/。
 
 Worker 地址预计为：
 

@@ -23,6 +23,8 @@ cloudflare/*.tmp
 web/firmware/tamapoke-2.27.0-*.bin
 web/firmware/tamapoke-2.27.0-*.bin.enc
 web/firmware/tamapoke-2.28.0-*.bin.enc
+# 明文镜像只允许存在于本地 release 目录，公网仓库只提交 .bin.enc。
+web/firmware/tamapoke-*.bin
 
 # Release archives stay local. Only the current encrypted web images are public.
 releases/2.27.0-strict-authorized/old-public/
