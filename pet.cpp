@@ -713,6 +713,7 @@ bool Pet::buyShopProduct(uint8_t category, uint8_t slot) {
   coins -= product.price;
   uint8_t id = shopProductId(category, slot);
   if (warehouse[id] < 250) warehouse[id]++;
+  if (category == SHOP_CAT_PROP) propOwned |= (uint32_t)(1UL << slot);
   registerCare();
   save();
   return true;
@@ -818,21 +819,19 @@ bool Pet::useShopProduct(uint8_t category, uint8_t slot) {
     if (slot == 1 || slot == 2 || slot == 3 || slot == 8) equipmentDef = clamp100(equipmentDef + product.value);
     if (slot == 4 || slot == 5 || slot == 9) equipmentImm = clamp100(equipmentImm + product.value);
   } else if (category == SHOP_CAT_PROP) {
-    propOwned |= (uint16_t)(1u << slot);
-    if (slot < 8) {
-      decorOwned |= (uint8_t)(1u << slot);
-      decorPlaced[room < 4 ? room : 0] |= (uint8_t)(1u << slot);
-    }
+    // 道具是场景布置物，使用不会消耗库存；实际布置由仓库中的
+    // “布置/收回”按钮控制，并保留在购买清单中。
+    propOwned |= (uint32_t)(1UL << slot);
   }
-  if (warehouse[id]) warehouse[id]--;
+  if (category != SHOP_CAT_PROP && warehouse[id]) warehouse[id]--;
   registerCare();
   save();
   return true;
 }
 
 bool Pet::toggleProp(uint8_t slot) {
-  if (ceremony != CER_NONE || isEgg() || sleeping || slot >= 10) return false;
-  uint16_t bit = (uint16_t)(1u << slot);
+  if (ceremony != CER_NONE || isEgg() || sleeping || slot >= SHOP_ITEMS_PER_CATEGORY) return false;
+  uint32_t bit = (uint32_t)(1UL << slot);
   if (!(propOwned & bit)) return false;
   propPlaced[room < 4 ? room : 0] ^= bit;
   save();
@@ -1094,7 +1093,9 @@ void Pet::save() {
   prefs.putUChar("dOwn", decorOwned);
   prefs.putBytes("dRoom", decorPlaced, sizeof(decorPlaced));
   prefs.putBytes("stock", warehouse, sizeof(warehouse));
-  prefs.putUShort("pOwn", propOwned);
+  // pOwn32 扩展到 20 个道具位；保留 pOwn 兼容旧版存档。
+  prefs.putULong("pOwn32", propOwned);
+  prefs.putUShort("pOwn", (uint16_t)propOwned);
   prefs.putBytes("pRoom", propPlaced, sizeof(propPlaced));
   prefs.putUChar("eqAtk", equipmentAtk);
   prefs.putUChar("eqDef", equipmentDef);
@@ -1167,9 +1168,17 @@ void Pet::load() {
   }
   memset(warehouse, 0, sizeof(warehouse));
   prefs.getBytes("stock", warehouse, sizeof(warehouse));
-  propOwned = prefs.getUShort("pOwn", 0);
+  propOwned = prefs.getULong("pOwn32", 0);
+  if (!propOwned) propOwned = prefs.getUShort("pOwn", 0);
+  // 旧版只在“使用”时记录 propOwned；购买后库存中的道具也应可布置。
+  for (uint8_t slot = 0; slot < SHOP_ITEMS_PER_CATEGORY; ++slot)
+    if (warehouse[shopProductId(SHOP_CAT_PROP, slot)]) propOwned |= (uint32_t)(1UL << slot);
   memset(propPlaced, 0, sizeof(propPlaced));
-  prefs.getBytes("pRoom", propPlaced, sizeof(propPlaced));
+  if (prefs.getBytes("pRoom", propPlaced, sizeof(propPlaced)) != sizeof(propPlaced)) {
+    uint16_t oldPlaced[4] = { 0, 0, 0, 0 };
+    if (prefs.getBytes("pRoom", oldPlaced, sizeof(oldPlaced)) == sizeof(oldPlaced))
+      for (uint8_t i = 0; i < 4; ++i) propPlaced[i] = oldPlaced[i];
+  }
   equipmentAtk = prefs.getUChar("eqAtk", 0);
   equipmentDef = prefs.getUChar("eqDef", 0);
   equipmentImm = prefs.getUChar("eqImm", 0);

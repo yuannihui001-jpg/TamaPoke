@@ -33,7 +33,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "2.32.0"
+#define FW_VERSION "2.33.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -121,10 +121,10 @@ uint8_t cardPage = 0;         // 0 perfil, 1 stats+medallas
 bool equipmentActionOpen = false;
 uint8_t equipmentActionSlot = 0;
 // 装备槽围绕大号宠物排布，避开圆屏边缘并对应头盔、护甲、手部和鞋子。
-static const int EQUIP_BOX_X[5] = { 52, 254, 10, 296, 153 };
-static const int EQUIP_BOX_Y[5] = { 72, 72, 208, 208, 344 };
-static const int EQUIP_BOX_W = 160;
-static const int EQUIP_BOX_H = 38;
+static const int EQUIP_BOX_X[5] = { 170, 18, 322, 18, 322 };
+static const int EQUIP_BOX_Y[5] = { 58, 164, 164, 254, 254 };
+static const int EQUIP_BOX_W = 126;
+static const int EQUIP_BOX_H = 34;
 bool clockOpen = false;       // pantalla de ajuste de hora (deslizar abajo)
 int clockH = 12, clockM = 0;  // hora en edicion
 
@@ -154,7 +154,7 @@ char updateVersion[16] = "";
 static const char *const AUTH_SERVER_URL = "https://tamapoke-license.yuannihui001.workers.dev";
 // 仅用于已经刷入官方固件的设备首次取得长期 OTA 令牌；浏览器安装仍必须
 // 先通过作者许可校验。该值与 Worker 的发布门槛保持一致。
-static const char *const FW_RELEASE_PROOF = "TamaPoke-2.32.0-official";
+static const char *const FW_RELEASE_PROOF = "TamaPoke-2.33.0-official";
 
 // minijuego "toques": mantener la pokeball en el aire
 bool gameOpen = false;
@@ -335,6 +335,7 @@ void battleTap(int16_t x, int16_t y);
 void renderBattle();
 void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS);
 static void drawProductIcon(uint8_t category, uint8_t slot, int cx, int cy, uint8_t s);
+static void drawPropProduct(uint8_t slot, int x, int y, float u);
 // proteccion del AMOLED: atenuado por inactividad
 uint32_t lastInteract = 0;
 uint8_t dimStage = 0;        // 0 despierto, 1 atenuado (90s), 2 casi apagado (5min)
@@ -498,7 +499,10 @@ void loop() {
   // 85 ms en juego/saco: margen seguro para que el redibujado no pise el envio
   // DMA del frame anterior (a 40-65 ms solapaba y causaba flashes negros; con
   // sprites grandes el dibujo tarda mas, asi que se deja colchon)
-  if (now - lastRender >= (uint32_t)((gameOpen || memoryOpen || gameMenuOpen || worldOpen || shopOpen || warehouseOpen || decorOpen || sackOpen || battleOpen) ? 85 : 100)) {
+  uint32_t renderInterval = (gameOpen || memoryOpen || gameMenuOpen || worldOpen || shopOpen || warehouseOpen || decorOpen || sackOpen || battleOpen) ? 85 : 100;
+  // 睡眠时保持状态成长，但降低刷屏频率；屏幕背光由 updateBrightness 置为最低。
+  if (pet.sleeping) renderInterval = sleepTouchUntil > now ? 120 : 2000;
+  if (now - lastRender >= renderInterval) {
     lastRender = now;
     render();
   }
@@ -741,9 +745,11 @@ static bool requestDeviceVersion(String &response, int &statusCode) {
   HTTPClient check;
   String checkUrl = String(AUTH_SERVER_URL) + "/v1/device-version";
   if (!check.begin(client, checkUrl)) return false;
-  check.addHeader("Authorization", String("Bearer ") + authToken);
+  // 官方固件使用内置发布证明即可更新；旧版设备仍可携带长期令牌。
+  if (authToken.length()) check.addHeader("Authorization", String("Bearer ") + authToken);
   check.addHeader("X-TamaPoke-Device", deviceIdString());
   check.addHeader("X-TamaPoke-Version", FW_VERSION);
+  check.addHeader("X-TamaPoke-Release", FW_RELEASE_PROOF);
   statusCode = check.GET();
   if (statusCode > 0) response = check.getString();
   check.end();
@@ -755,13 +761,6 @@ void onlineUpdate() {
     setWifiNotice("请先连接 WiFi");
     return;
   }
-  // 官方固件首次更新时自动登记设备，之后令牌保存在 NVS 中；不再要求
-  // 用户在设备上重复输入许可码。浏览器全量安装仍由 Worker 严格校验许可。
-  if (!authToken.length() && !bootstrapDeviceGrant()) {
-    setWifiNotice("设备未登记，请先安装官方固件");
-    Serial.printf("设备 ID: %s\n", deviceIdString().c_str());
-    return;
-  }
   setWifiNotice("正在检查更新...", 12000);
   int checkCode = -1;
   String checkResponse;
@@ -770,21 +769,10 @@ void onlineUpdate() {
     setWifiNotice("更新地址无法打开");
     return;
   }
-  // NVS 中可能还留着旧版或过期令牌。服务端拒绝后自动清除并重新
-  // 登记，不再把已经刷入官方固件的设备误报成“未登记”。
-  if (checkCode == HTTP_CODE_FORBIDDEN) {
-    authToken = "";
-    uiPrefs.remove("auth");
-    if (!bootstrapDeviceGrant() || !requestDeviceVersion(checkResponse, checkCode)) {
-      Serial.printf("设备重新登记失败 HTTP %d ID=%s\n", checkCode, deviceIdString().c_str());
-      setWifiNotice("官方固件登记失败，请检查网络");
-      return;
-    }
-  }
   int vstart = checkResponse.indexOf("\"version\":\"");
   if (checkCode != HTTP_CODE_OK || vstart < 0) {
     Serial.printf("更新检查 HTTP %d\n", checkCode);
-    setWifiNotice(checkCode == 403 ? "设备授权已失效" : "更新检查失败");
+    setWifiNotice("更新检查失败");
     return;
   }
   vstart += 11;
@@ -814,8 +802,8 @@ void updateDialogTap(int16_t x, int16_t y) {
 }
 
 void performOnlineUpdate() {
-  if (WiFi.status() != WL_CONNECTED || !authToken.length()) {
-    setWifiNotice("设备授权或 WiFi 不可用");
+  if (WiFi.status() != WL_CONNECTED) {
+    setWifiNotice("请先连接 WiFi");
     return;
   }
   setWifiNotice("正在下载更新，请勿断电", 30000);
@@ -829,9 +817,10 @@ void performOnlineUpdate() {
     setWifiNotice("更新地址无法打开");
     return;
   }
-  http.addHeader("Authorization", String("Bearer ") + authToken);
+  if (authToken.length()) http.addHeader("Authorization", String("Bearer ") + authToken);
   http.addHeader("X-TamaPoke-Device", deviceIdString());
   http.addHeader("X-TamaPoke-Version", FW_VERSION);
+  http.addHeader("X-TamaPoke-Release", FW_RELEASE_PROOF);
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
     Serial.printf("OTA HTTP %d\n", code);
@@ -1607,6 +1596,19 @@ static void drawRoomDetails(uint8_t biome, uint32_t now, bool night) {
     gfx->drawLine(kx, ky + 20, kx - 10, ky + 36, shade);
     gfx->fillCircle(kx - 12, ky + 38, 4, C565(0xff, 0xd0, 0x43));
   }
+  // 道具商店中的布置物使用独立位图保存；购买后在仓库点击“布置”
+  // 即显示到当前场景，点击“收回”则从场景移除但仍保留在仓库。
+  static const int PROP_X[20] = {
+    72, 136, 200, 264, 328, 394, 48, 112, 176, 240,
+    304, 368, 424, 82, 146, 210, 274, 338, 402, 230
+  };
+  static const int PROP_Y[20] = {
+    250, 250, 250, 250, 250, 250, 294, 294, 294, 294,
+    294, 294, 294, 338, 338, 338, 338, 338, 338, 360
+  };
+  uint32_t props = pet.roomProps();
+  for (uint8_t slot = 0; slot < SHOP_ITEMS_PER_CATEGORY; ++slot)
+    if (props & (uint32_t)(1UL << slot)) drawPropProduct(slot, PROP_X[slot], PROP_Y[slot], 0.42f);
   (void)biome;
   (void)now;
 }
@@ -3212,6 +3214,22 @@ void warehouseTap(int16_t x, int16_t y) {
             pet.joy = pet.energy = pet.health = 100;
             travelSlot = slot; travelUntil = millis() + 10000; travelOpen = true;
           } else economyNotice(false);
+        } else if (shopPage == SHOP_CAT_PROP) {
+          // 布置物不会被“使用”消耗，仓库按钮只切换当前场景中的摆放状态。
+          int baseX = 25 + col * 210;
+          bool placeTap = x >= baseX + 102 && x < baseX + 149;
+          bool removeTap = x >= baseX + 149 && x < baseX + 196;
+          uint32_t bit = (uint32_t)(1UL << slot);
+          bool placed = (pet.roomProps() & bit) != 0;
+          if (placeTap) {
+            if (placed) economyNoticeText("已经布置");
+            else if (pet.toggleProp(slot)) economyNoticeText("已布置");
+            else economyNotice(false);
+          } else if (removeTap) {
+            if (!placed) economyNoticeText("已经收回");
+            else if (pet.toggleProp(slot)) economyNoticeText("已收回");
+            else economyNotice(false);
+          }
         } else economyNotice(pet.useShopProduct(shopPage, slot));
         return;
       }
@@ -3290,9 +3308,25 @@ void renderWarehouse() {
       gfx->setTextSize(1);
       drawProductIcon(shopPage, slot, x + 22, y + 17, 1);
       gfx->setCursor(x + 44, y + 6);
-      gfx->print(SHOP_PRODUCTS[shopPage][slot].name);
-      char qty[8]; snprintf(qty, sizeof(qty), "x%u", (unsigned)pet.warehouseCount(shopPage, slot));
-      gfx->setCursor(x + 160, y + 9); gfx->print(qty);
+      String itemName = wifiLabelFit(String(SHOP_PRODUCTS[shopPage][slot].name), shopPage == SHOP_CAT_PROP ? 48 : 104);
+      gfx->print(itemName.c_str());
+      if (shopPage == SHOP_CAT_PROP) {
+        // 道具保留在仓库，分别提供幂等的布置和收回按钮。
+        const int bx[2] = { x + 102, x + 149 };
+        const char *labels[2] = { "布置", "收回" };
+        const uint16_t colors[2] = { UI_BAR_OK, UI_BAR_BAD };
+        bool placed = (pet.roomProps() & (uint32_t)(1UL << slot)) != 0;
+        for (uint8_t b = 0; b < 2; ++b) {
+          gfx->fillRoundRect(bx[b], y + 4, 43, 26, 6, placed && b == 0 ? C565(0xc8, 0xd9, 0xcd) : UI_WHITE);
+          gfx->drawRoundRect(bx[b], y + 4, 43, 26, 6, UI_INK);
+          gfx->setTextColor(colors[b]);
+          gfx->setCursor(bx[b] + (43 - uiTextWidth(labels[b], 6)) / 2, y + 9);
+          gfx->print(labels[b]);
+        }
+      } else {
+        char qty[8]; snprintf(qty, sizeof(qty), "x%u", (unsigned)pet.warehouseCount(shopPage, slot));
+        gfx->setCursor(x + 160, y + 9); gfx->print(qty);
+      }
     }
   }
   gfx->setTextSize(1);
@@ -3908,7 +3942,7 @@ void renderCardProgress() {
 }
 
 static const char *const EQUIP_LABELS[EQUIP_SLOT_COUNT] = {
-  "头盔", "护甲", "鞋子", "左手武器", "右手武器"
+  "头盔", "护甲", "鞋子", "左手", "右手"
 };
 
 static void drawEquipmentPetPreview() {
@@ -3944,11 +3978,11 @@ static void drawEquipmentSlotCard(uint8_t slot) {
   }
   drawProductIcon(SHOP_CAT_EQUIPMENT, item, x + 30, y + 19, 1);
   gfx->setTextColor(UI_INK);
-  String itemName = wifiLabelFit(String(SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][item].name), 58);
-  gfx->setCursor(x + 48, y + 6);
+  String itemName = wifiLabelFit(String(SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][item].name), 42);
+  gfx->setCursor(x + 44, y + 5);
   gfx->print(itemName.c_str());
   gfx->setTextColor(UI_BAR_OK);
-  gfx->setCursor(x + EQUIP_BOX_W - 40, y + 6);
+  gfx->setCursor(x + EQUIP_BOX_W - 24, y + 5);
   gfx->print("在用");
 }
 
@@ -3979,7 +4013,7 @@ void renderCardEquipment() {
   gfx->setTextColor(UI_INK); gfx->setTextSize(1);
   char bonus[48];
   snprintf(bonus, sizeof(bonus), "攻 %u  防 %u  免疫 %u", pet.equipmentAtk, pet.equipmentDef, pet.equipmentImm);
-  gfx->setCursor(CX - uiTextWidth(bonus, 6) / 2, 364);
+  gfx->setCursor(CX - uiTextWidth(bonus, 6) / 2, 374);
   gfx->print(bonus);
   if (equipmentActionOpen) renderEquipmentActionDialog();
 }

@@ -69,8 +69,8 @@ public:
   uint8_t decorOwned = 1; // ocho juguetes: pelota, flores, tienda, lampara, tambor, bloques, tren, cometa
   uint8_t decorPlaced[4] = { 1, 0, 0, 0 }; // objetos colocados por sala
   uint8_t warehouse[SHOP_TOTAL_ITEMS] = { 0 }; // compras pendientes de usar
-  uint16_t propOwned = 0;   // decoracion comprada en la tienda de objetos
-  uint16_t propPlaced[4] = { 0, 0, 0, 0 };
+  uint32_t propOwned = 0;   // 道具商店已购买的布置物（20 项位图）
+  uint32_t propPlaced[4] = { 0, 0, 0, 0 };
   uint8_t equipmentAtk = 0, equipmentDef = 0, equipmentImm = 0;
   uint8_t equipped[EQUIP_SLOT_COUNT] = { EQUIP_EMPTY, EQUIP_EMPTY, EQUIP_EMPTY, EQUIP_EMPTY, EQUIP_EMPTY };
   // genes (90-110%, se tiran al eclosionar) y entrenamiento (0-100)
@@ -153,7 +153,7 @@ public:
       ? warehouse[shopProductId(category, slot)] : 0;
   }
   bool toggleProp(uint8_t slot);
-  uint16_t roomProps() const { return propPlaced[room < 4 ? room : 0]; }
+  uint32_t roomProps() const { return propPlaced[room < 4 ? room : 0]; }
   bool visitRoom(uint8_t nextRoom);
   bool toggleDecor(uint8_t slot);
   uint8_t roomDecor() const { return decorPlaced[room < 4 ? room : 0]; }
