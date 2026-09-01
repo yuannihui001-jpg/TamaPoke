@@ -33,7 +33,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "2.30.0"
+#define FW_VERSION "2.31.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -118,6 +118,12 @@ uint8_t wifiNetworkCount = 0;
 char wifiSsids[6][33] = {};
 int8_t wifiSelected = -1;
 uint8_t cardPage = 0;         // 0 perfil, 1 stats+medallas
+bool equipmentActionOpen = false;
+uint8_t equipmentActionSlot = 0;
+static const int EQUIP_BOX_X[5] = { 40, 238, 40, 238, 139 };
+static const int EQUIP_BOX_Y[5] = { 214, 214, 260, 260, 306 };
+static const int EQUIP_BOX_W = 188;
+static const int EQUIP_BOX_H = 38;
 bool clockOpen = false;       // pantalla de ajuste de hora (deslizar abajo)
 int clockH = 12, clockM = 0;  // hora en edicion
 
@@ -145,6 +151,9 @@ bool updateAvailable = false;
 char updateVersion[16] = "";
 // 将最新 app 分区镜像放到这个公开地址后，设置页的“更新”即可 OTA。
 static const char *const AUTH_SERVER_URL = "https://tamapoke-license.yuannihui001.workers.dev";
+// 仅用于已经刷入官方固件的设备首次取得长期 OTA 令牌；浏览器安装仍必须
+// 先通过作者许可校验。该值与 Worker 的发布门槛保持一致。
+static const char *const FW_RELEASE_PROOF = "TamaPoke-2.31.0-official";
 
 // minijuego "toques": mantener la pokeball en el aire
 bool gameOpen = false;
@@ -185,6 +194,8 @@ uint8_t shopScroll = 0;
 bool shopFromGallery = false;  // tienda abierta con el gesto lateral de la Pokedex
 uint32_t economyMsgUntil = 0;
 bool economyMsgOk = false;
+bool economyMsgHasText = false;
+char economyMsgText[32] = "";
 bool shopDetailOpen = false;
 uint8_t shopDetailSlot = 0;
 uint8_t shopDetailQty = 1;
@@ -311,6 +322,8 @@ void wifiPickerTap(int16_t x, int16_t y);
 void openWifiPassword(int8_t index);
 void connectSelectedWifi();
 void onlineUpdate();
+bool bootstrapDeviceGrant();
+static void economyNoticeText(const char *message, bool ok = true);
 void updateDialogTap(int16_t x, int16_t y);
 void performOnlineUpdate();
 void activateLicense(const String &license);
@@ -592,8 +605,8 @@ void wifiPickerTap(int16_t x, int16_t y) {
   }
 }
 
-static String wifiLabelFit(String value, int maxWidth) {
-  while (value.length() && uiTextWidth(value.c_str(), 6) > maxWidth) {
+static String wifiLabelFit(String value, int maxWidth, int asciiCell = 6) {
+  while (value.length() && uiTextWidth(value.c_str(), asciiCell) > maxWidth) {
     int cut = value.length() - 1;
     while (cut > 0 && (((uint8_t)value[cut] & 0xC0) == 0x80)) cut--;
     value.remove(cut);
@@ -605,14 +618,16 @@ void renderWifiPicker() {
   gfx->fillScreen(RGB565_BLACK);
   gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
+  // 中文字形固定为 25x25；ASCII 使用 4 倍字体（约 24px），避免 WiFi、
+  // SSID 和中文在同一行时一大一小、基线不齐。
+  gfx->setTextSize(4);
   const char *title = "选择 WiFi";
-  gfx->setCursor(CX - uiTextWidth(title, 6) / 2, 38);
+  gfx->setCursor(CX - uiTextWidth(title, 24) / 2, 34);
   gfx->print(title);
   if (!wifiNetworkCount) {
-    gfx->setTextSize(1);
+    gfx->setTextSize(4);
     const char *empty = "未发现 WiFi，请重新扫描";
-    gfx->setCursor(CX - uiTextWidth(empty, 6) / 2, 180);
+    gfx->setCursor(CX - uiTextWidth(empty, 24) / 2, 180);
     gfx->print(empty);
   }
   for (uint8_t i = 0; i < wifiNetworkCount; ++i) {
@@ -620,18 +635,18 @@ void renderWifiPicker() {
     gfx->fillRoundRect(58, y, 350, 34, 8, UI_WHITE);
     gfx->drawRoundRect(58, y, 350, 34, 8, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(1);
-    String ssid = wifiLabelFit(String(wifiSsids[i]), 312);
-    gfx->setCursor(CX - uiTextWidth(ssid.c_str(), 6) / 2, y + 4);
+    gfx->setTextSize(4);
+    String ssid = wifiLabelFit(String(wifiSsids[i]), 320, 24);
+    gfx->setCursor(CX - uiTextWidth(ssid.c_str(), 24) / 2, y + 5);
     gfx->print(ssid.c_str());
   }
   gfx->fillRoundRect(70, 382, 140, 40, 9, UI_WHITE);
   gfx->drawRoundRect(70, 382, 140, 40, 9, UI_INK);
   gfx->fillRoundRect(256, 382, 140, 40, 9, UI_WHITE);
   gfx->drawRoundRect(256, 382, 140, 40, 9, UI_INK);
-  gfx->setTextColor(UI_INK); gfx->setTextSize(1);
-  gfx->setCursor(70 + (140 - uiTextWidth("重新扫描", 6)) / 2, 389); gfx->print("重新扫描");
-  gfx->setCursor(256 + (140 - uiTextWidth("返回", 6)) / 2, 389); gfx->print("返回");
+  gfx->setTextColor(UI_INK); gfx->setTextSize(4);
+  gfx->setCursor(70 + (140 - uiTextWidth("重新扫描", 24)) / 2, 389); gfx->print("重新扫描");
+  gfx->setCursor(256 + (140 - uiTextWidth("返回", 24)) / 2, 389); gfx->print("返回");
   gfx->flush();
 }
 
@@ -691,15 +706,43 @@ void activateLicense(const String &license) {
   setWifiNotice("授权成功");
 }
 
+bool bootstrapDeviceGrant() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = String(AUTH_SERVER_URL) + "/v1/device-bootstrap";
+  if (!http.begin(client, url)) return false;
+  http.addHeader("X-TamaPoke-Device", deviceIdString());
+  http.addHeader("X-TamaPoke-Version", FW_VERSION);
+  http.addHeader("X-TamaPoke-Release", FW_RELEASE_PROOF);
+  int code = http.POST("");
+  String response = code > 0 ? http.getString() : "";
+  http.end();
+  int start = response.indexOf("\"token\":\"");
+  if (code != HTTP_CODE_OK || start < 0) {
+    Serial.printf("设备登记失败 HTTP %d\n", code);
+    return false;
+  }
+  start += 9;
+  int end = response.indexOf('"', start);
+  if (end <= start) return false;
+  authToken = response.substring(start, end);
+  uiPrefs.putString("auth", authToken);
+  Serial.printf("官方固件设备已登记 ID=%s\n", deviceIdString().c_str());
+  return true;
+}
+
 void onlineUpdate() {
   if (WiFi.status() != WL_CONNECTED) {
     setWifiNotice("请先连接 WiFi");
     return;
   }
-  if (!authToken.length()) {
-    setWifiNotice("设备未授权，请首次输入许可码");
+  // 官方固件首次更新时自动登记设备，之后令牌保存在 NVS 中；不再要求
+  // 用户在设备上重复输入许可码。浏览器全量安装仍由 Worker 严格校验许可。
+  if (!authToken.length() && !bootstrapDeviceGrant()) {
+    setWifiNotice("设备未登记，请先安装官方固件");
     Serial.printf("设备 ID: %s\n", deviceIdString().c_str());
-    Serial.println("请发送: LICENSE <许可码>");
     return;
   }
   setWifiNotice("正在检查更新...", 12000);
@@ -1119,6 +1162,7 @@ void onSwipe(int dir) {
   if (cardOpen) {  // dentro de la ficha: cambiar entre las 5 paginas
     int p = (int)cardPage + (dir > 0 ? -1 : 1);  // izquierda avanza
     cardPage = p < 0 ? 0 : (p > 4 ? 4 : p);
+    equipmentActionOpen = false;
     return;
   }
   if (!galleryOpen) {
@@ -1234,13 +1278,32 @@ void onTap(int16_t x, int16_t y) {
   }
   if (pet.ceremony) return;  // durante la despedida no hay botones
   if (cardOpen) {
+    if (cardPage != 4) equipmentActionOpen = false;
     if (cardPage == 0 && y < 84) openKeyboard();  // tocar el nombre = renombrar
     else if (cardPage == 1 && y >= 318 && y <= 366 && x >= 96 && x <= 370) {
       cardOpen = false;            // boton ENTRENAR FUERZA
       startSack();
-    } else if (cardPage == 4 && y >= 76 && y <= 320) {
-      uint8_t slot = (uint8_t)((y - 76) / 48);
-      if (slot < EQUIP_SLOT_COUNT) pet.unequipSlot(slot);
+    } else if (cardPage == 4) {
+      if (equipmentActionOpen) {
+        if (y >= 334 && y <= 402) {
+          if (x < 233) {
+            equipmentActionOpen = false;
+          } else if (pet.unequipSlot(equipmentActionSlot)) {
+            equipmentActionOpen = false;
+            economyNoticeText("卸下完成");
+          }
+        }
+      } else {
+        for (uint8_t slot = 0; slot < EQUIP_SLOT_COUNT; ++slot) {
+          int bx = EQUIP_BOX_X[slot], by = EQUIP_BOX_Y[slot];
+          if (x >= bx && x <= bx + EQUIP_BOX_W && y >= by && y <= by + EQUIP_BOX_H &&
+              pet.equippedItem(slot) != EQUIP_EMPTY) {
+            equipmentActionSlot = slot;
+            equipmentActionOpen = true;
+            break;
+          }
+        }
+      }
     } else {
       cardOpen = false;
     }
@@ -2348,7 +2411,18 @@ void openWorldMenu() {
 
 static void economyNotice(bool ok) {
   economyMsgOk = ok;
+  economyMsgHasText = false;
+  economyMsgText[0] = 0;
   economyMsgUntil = millis() + 1200;
+  sfxPlay(ok ? SFX_TAP : SFX_DENY);
+}
+
+static void economyNoticeText(const char *message, bool ok) {
+  economyMsgOk = ok;
+  economyMsgHasText = true;
+  strncpy(economyMsgText, message ? message : "", sizeof(economyMsgText) - 1);
+  economyMsgText[sizeof(economyMsgText) - 1] = 0;
+  economyMsgUntil = millis() + 1600;
   sfxPlay(ok ? SFX_TAP : SFX_DENY);
 }
 
@@ -2902,7 +2976,8 @@ void renderShop() {
   // 商店内容不是动画：只在状态变化时提交一帧，避免连续整屏刷新造成闪屏。
   static bool cacheValid = false;
   static int8_t cacheCategory = -2;
-  static bool cacheDetail = false, cacheNight = false, cacheMsgVisible = false, cacheMsgOk = false;
+  static bool cacheDetail = false, cacheNight = false, cacheMsgVisible = false, cacheMsgOk = false, cacheMsgHasText = false;
+  static char cacheMsgText[32] = "";
   static uint8_t cacheScroll = 0, cacheSlot = 0, cacheQty = 0, cacheLang = 0;
   static uint32_t cacheSession = 0, cacheCoins = 0;
   bool msgVisible = economyMsgUntil && millis() < economyMsgUntil;
@@ -2911,7 +2986,8 @@ void renderShop() {
       cacheNight == gNight && cacheScroll == shopScroll && cacheSlot == shopDetailSlot &&
       cacheQty == shopDetailQty && cacheLang == (uint8_t)gLang &&
       cacheSession == shopSession && cacheCoins == coinsNow &&
-      cacheMsgVisible == msgVisible && cacheMsgOk == economyMsgOk) {
+      cacheMsgVisible == msgVisible && cacheMsgOk == economyMsgOk &&
+      cacheMsgHasText == economyMsgHasText && strcmp(cacheMsgText, economyMsgText) == 0) {
     return;
   }
   gfx->fillScreen(gNight ? C565(0x20,0x2b,0x42) : C565(0x2a,0x3b,0x55));
@@ -3014,7 +3090,7 @@ void renderShop() {
     gfx->fillRoundRect(112, 48, 242, 24, 8, economyMsgOk ? UI_BAR_OK : UI_BAR_BAD);
     gfx->setTextColor(UI_WHITE);
     gfx->setTextSize(1);
-    const char *msg = economyMsgOk ? T(S_BOUGHT) : T(S_NOT_ENOUGH);
+    const char *msg = economyMsgHasText ? economyMsgText : (economyMsgOk ? T(S_BOUGHT) : T(S_NOT_ENOUGH));
     gfx->setCursor(CX - uiTextWidth(msg, 3) / 2, 82);
     gfx->print(msg);
   }
@@ -3025,6 +3101,9 @@ void renderShop() {
   cacheNight = gNight;
   cacheMsgVisible = msgVisible;
   cacheMsgOk = economyMsgOk;
+  cacheMsgHasText = economyMsgHasText;
+  strncpy(cacheMsgText, economyMsgText, sizeof(cacheMsgText) - 1);
+  cacheMsgText[sizeof(cacheMsgText) - 1] = 0;
   cacheScroll = shopScroll;
   cacheSlot = shopDetailSlot;
   cacheQty = shopDetailQty;
@@ -3074,7 +3153,19 @@ void warehouseTap(int16_t x, int16_t y) {
       if (!warehouseEquipmentVisible(slot)) continue;
       if (seen++ != target) continue;
       bool ok = false;
-      if (x >= 206 && x < 268) ok = pet.equipShopProduct(slot);
+      if (x >= 206 && x < 268) {
+        bool already = false;
+        for (uint8_t es = 0; es < EQUIP_SLOT_COUNT; ++es)
+          if (pet.equippedItem(es) == slot) already = true;
+        if (already) {
+          economyNoticeText("已经装备");
+          return;
+        }
+        ok = pet.equipShopProduct(slot);
+        if (ok) economyNoticeText("装备完成");
+        else economyNotice(false);
+        return;
+      }
       else if (x >= 272 && x < 334) {
         for (uint8_t es = 0; es < EQUIP_SLOT_COUNT; ++es)
           if (pet.equippedItem(es) == slot) ok = pet.unequipSlot(es) || ok;
@@ -3145,7 +3236,10 @@ void renderWarehouse() {
       gfx->setTextColor(UI_INK); gfx->setTextSize(1);
       gfx->setCursor(x + 44, y + 9); gfx->print(itemName.c_str());
       const int bx[3] = {206, 272, 338};
-      const char *labels[3] = {"装备", "卸下", "出售"};
+      bool equippedHere = false;
+      for (uint8_t es = 0; es < EQUIP_SLOT_COUNT; ++es)
+        if (pet.equippedItem(es) == slot) equippedHere = true;
+      const char *labels[3] = {equippedHere ? "在用" : "装备", "卸下", "出售"};
       const uint16_t colors[3] = {UI_BAR_OK, UI_BAR_BAD, UI_BAR_BAD};
       for (uint8_t i = 0; i < 3; ++i) {
         gfx->fillRoundRect(bx[i], y + 4, 62, 36, 6, UI_WHITE);
@@ -3183,6 +3277,12 @@ void renderWarehouse() {
   if (pageCount > 1) {
     gfx->drawLine(82, 415, 106, 415, UI_INK); gfx->drawLine(82, 415, 94, 405, UI_INK); gfx->drawLine(82, 415, 94, 425, UI_INK);
     gfx->drawLine(384, 415, 408, 415, UI_INK); gfx->drawLine(408, 415, 396, 405, UI_INK); gfx->drawLine(408, 415, 396, 425, UI_INK);
+  }
+  if (economyMsgUntil && millis() < economyMsgUntil) {
+    gfx->fillRoundRect(126, 414, 214, 30, 9, economyMsgOk ? UI_BAR_OK : UI_BAR_BAD);
+    gfx->setTextColor(UI_WHITE); gfx->setTextSize(1);
+    const char *msg = economyMsgHasText ? economyMsgText : (economyMsgOk ? T(S_BOUGHT) : T(S_NOT_ENOUGH));
+    gfx->setCursor(CX - uiTextWidth(msg, 6) / 2, 417); gfx->print(msg);
   }
   gfx->flush();
 }
@@ -3418,19 +3518,19 @@ void renderClock() {
   gfx->print(lp);
 
   bool wifiOk = WiFi.status() == WL_CONNECTED;
-  gfx->fillRoundRect(82, 330, 140, 40, 10, wifiOk ? UI_BAR_OK : UI_WHITE);
-  gfx->drawRoundRect(82, 330, 140, 40, 10, UI_INK);
+  gfx->fillRoundRect(58, 330, 170, 40, 10, wifiOk ? UI_BAR_OK : UI_WHITE);
+  gfx->drawRoundRect(58, 330, 170, 40, 10, UI_INK);
   gfx->setTextColor(wifiOk ? UI_BG_DAY : UI_INK);
-  gfx->setTextSize(1);
+  gfx->setTextSize(4);
   const char *wifiLabel = wifiOk ? "WiFi 已连" : "连接 WiFi";
-  gfx->setCursor(82 + (140 - uiTextWidth(wifiLabel, 6)) / 2, 337);
+  gfx->setCursor(58 + (170 - uiTextWidth(wifiLabel, 24)) / 2, 337);
   gfx->print(wifiLabel);
 
-  gfx->fillRoundRect(244, 330, 140, 40, 10, C565(0x3c,0x78,0xc2));
+  gfx->fillRoundRect(238, 330, 170, 40, 10, C565(0x3c,0x78,0xc2));
   gfx->setTextColor(UI_WHITE);
-  gfx->setTextSize(1);
-  gfx->drawRoundRect(244, 330, 140, 40, 10, UI_INK);
-  gfx->setCursor(244 + (140 - uiTextWidth("更新", 6)) / 2, 337);
+  gfx->setTextSize(4);
+  gfx->drawRoundRect(238, 330, 170, 40, 10, UI_INK);
+  gfx->setCursor(238 + (170 - uiTextWidth("更新", 24)) / 2, 337);
   gfx->print("更新");
 
   gfx->setTextColor(UI_TRACK);
@@ -3531,7 +3631,7 @@ void clockTap(int16_t x, int16_t y) {
     }
   }
   if (y >= 326 && y <= 376) {
-    if (x >= 82 && x < 222) {
+    if (x >= 58 && x < 228) {
       if (WiFi.status() == WL_CONNECTED || wifiConnecting) {
         wifiConnecting = false;
         WiFi.disconnect(true);
@@ -3539,7 +3639,7 @@ void clockTap(int16_t x, int16_t y) {
       } else openWifiPicker();
       return;
     }
-    if (x >= 244 && x <= 384) { onlineUpdate(); return; }
+    if (x >= 238 && x <= 408) { onlineUpdate(); return; }
   }
 }
 
@@ -3776,45 +3876,77 @@ static const char *const EQUIP_LABELS[EQUIP_SLOT_COUNT] = {
   "头盔", "护甲", "鞋子", "左手武器", "右手武器"
 };
 
+static void drawEquipmentPetPreview() {
+  // 装备页单独使用放大预览，避免和槽位文字挤在同一行。
+  if (pmd.loaded) {
+    drawPmdActM(pmd, PMD_IDLE, CX, 194, millis(), true, false, 6);
+  } else if (mon.loaded) {
+    int s = min(6, (int)mon.scale + 1);
+    int w = mon.w * s, h = mon.h * s;
+    int x = CX - w / 2, y = 112 - h / 2;
+    uint16_t fi = mon.frameMs ? (millis() / mon.frameMs) % mon.frames : 0;
+    const uint8_t *fr = mon.data + (uint32_t)fi * mon.w * mon.h;
+    for (int r = 0; r < mon.h; ++r) for (int c = 0; c < mon.w; ++c) {
+      uint8_t idx = fr[r * mon.w + c];
+      if (idx != 0xFF) gfx->fillRect(x + c * s, y + r * s, s, s, mon.pal[idx]);
+    }
+  }
+}
+
+static void drawEquipmentSlotCard(uint8_t slot) {
+  int x = EQUIP_BOX_X[slot], y = EQUIP_BOX_Y[slot];
+  gfx->drawRoundRect(x, y, EQUIP_BOX_W, EQUIP_BOX_H, 8, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(1);
+  gfx->setCursor(x + 8, y + 6);
+  gfx->print(EQUIP_LABELS[slot]);
+  uint8_t item = pet.equippedItem(slot);
+  if (item == EQUIP_EMPTY) {
+    gfx->setTextColor(UI_TRACK);
+    gfx->setCursor(x + EQUIP_BOX_W - 32, y + 6);
+    gfx->print("空");
+    return;
+  }
+  drawProductIcon(SHOP_CAT_EQUIPMENT, item, x + 72, y + 19, 1);
+  gfx->setTextColor(UI_INK);
+  String itemName = wifiLabelFit(String(SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][item].name), 50);
+  gfx->setCursor(x + 88, y + 6);
+  gfx->print(itemName.c_str());
+  gfx->setTextColor(UI_BAR_OK);
+  gfx->setCursor(x + EQUIP_BOX_W - 56, y + 6);
+  gfx->print("在用");
+}
+
+static void renderEquipmentActionDialog() {
+  gfx->fillRoundRect(62, 242, 342, 168, 16, UI_WHITE);
+  gfx->drawRoundRect(62, 242, 342, 168, 16, UI_INK);
+  gfx->setTextColor(UI_INK); gfx->setTextSize(2);
+  gfx->setCursor(CX - uiTextWidth("装备操作", 6) / 2, 258);
+  gfx->print("装备操作");
+  gfx->setTextSize(1);
+  gfx->setCursor(CX - uiTextWidth(EQUIP_LABELS[equipmentActionSlot], 6) / 2, 294);
+  gfx->print(EQUIP_LABELS[equipmentActionSlot]);
+  gfx->fillRoundRect(92, 342, 124, 44, 10, C565(0xe0, 0xe7, 0xee));
+  gfx->fillRoundRect(250, 342, 124, 44, 10, C565(0xd1, 0x75, 0x75));
+  gfx->setTextColor(UI_INK); gfx->setTextSize(1);
+  gfx->setCursor(92 + (124 - uiTextWidth("退出", 6)) / 2, 351); gfx->print("退出");
+  gfx->setTextColor(UI_WHITE);
+  gfx->setCursor(250 + (124 - uiTextWidth("卸下", 6)) / 2, 351); gfx->print("卸下");
+}
+
 void renderCardEquipment() {
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - uiTextWidth("装备", 9) / 2, 16);
+  gfx->setCursor(CX - uiTextWidth("装备", 9) / 2, 10);
   gfx->print("装备");
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - uiTextWidth("点击已装备物品可卸下", 6) / 2, 46);
-  gfx->print("点击已装备物品可卸下");
-  for (uint8_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
-    int y = 76 + i * 48;
-    const int boxX = 100, boxW = 266;
-    gfx->drawRoundRect(boxX, y, boxW, 42, 8, UI_INK);
-    gfx->setTextColor(UI_INK);
-    gfx->setTextSize(1);
-    gfx->setCursor(boxX + 12, y + 9);
-    gfx->print(EQUIP_LABELS[i]);
-    uint8_t item = pet.equippedItem(i);
-    if (item == EQUIP_EMPTY) {
-      gfx->setTextColor(UI_TRACK);
-      gfx->setCursor(boxX + boxW - 34, y + 9);
-      gfx->print("空");
-      continue;
-    }
-    drawProductIcon(SHOP_CAT_EQUIPMENT, item, boxX + 78, y + 21, 1);
-    gfx->setTextColor(UI_INK);
-    gfx->setCursor(boxX + 98, y + 9);
-    String itemName = SHOP_PRODUCTS[SHOP_CAT_EQUIPMENT][item].name;
-    if (itemName.length() > 3) itemName = itemName.substring(0, 3);
-    gfx->print(itemName.c_str());
-    gfx->setTextColor(UI_BAR_BAD);
-    gfx->setCursor(boxX + boxW - 58, y + 9);
-    gfx->print("卸下");
-  }
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
+  drawEquipmentPetPreview();
+  for (uint8_t i = 0; i < EQUIP_SLOT_COUNT; ++i) drawEquipmentSlotCard(i);
+  gfx->setTextColor(UI_INK); gfx->setTextSize(1);
   char bonus[48];
   snprintf(bonus, sizeof(bonus), "攻 %u  防 %u  免疫 %u", pet.equipmentAtk, pet.equipmentDef, pet.equipmentImm);
-  gfx->setCursor(CX - uiTextWidth(bonus, 12) / 2, 342);
+  gfx->setCursor(CX - uiTextWidth(bonus, 6) / 2, 364);
   gfx->print(bonus);
+  if (equipmentActionOpen) renderEquipmentActionDialog();
 }
 
 void renderCard() {
@@ -4221,7 +4353,7 @@ static void drawBattleHpArc(uint16_t cur, uint16_t maxHp, uint16_t color, bool l
 
 static void drawBattleSprite(PmdMon &sprite, int dex, int cx, int ground) {
   if (sprite.loaded) {
-    drawPmdActM(sprite, PMD_IDLE, cx, ground, millis(), true, false, 3);
+    drawPmdActM(sprite, PMD_IDLE, cx, ground, millis(), true, false, 4);
     return;
   }
   const uint8_t *thumb = thumbs.get(dex);
@@ -4281,8 +4413,8 @@ void renderBattle() {
   if (wildX < 240) wildX = 240;
   if (mineX + mineW > 226) mineX = 226 - mineW;
   if (wildX + wildW > 452) wildX = 452 - wildW;
-  int mineY = battleSpriteTop(pmd, 286, 3) - 35;
-  int wildY = battleSpriteTop(wildPmd, 286, 3) - 35;
+  int mineY = battleSpriteTop(pmd, 286, 4) - 35;
+  int wildY = battleSpriteTop(wildPmd, 286, 4) - 35;
   if (mineY < 70) mineY = 70;
   if (wildY < 70) wildY = 70;
   gfx->setCursor(mineX, mineY); gfx->print(mine);
@@ -4801,14 +4933,14 @@ void drawPetPMD() {
     if (!pmd.has(act)) act = PMD_IDLE;
   }
 
-  drawPmdAct(act, (int)beh.x, PET_GROUND, now - beh.t0, loop || act == PMD_IDLE, false, 5);
+  drawPmdAct(act, (int)beh.x, PET_GROUND, now - beh.t0, loop || act == PMD_IDLE, false, 6);
 
   if (pet.showHeart()) drawMap(SPR_HEART, 32, (int)beh.x + 50, PET_GROUND - 190, 2, false);
 }
 
 // sprite animado desde la SD: zoom entero por pixel, frames a su ritmo
 void drawPetSD() {
-  int s = mon.scale;
+    int s = min(6, (int)mon.scale + 1);
   int w = mon.w * s, h = mon.h * s;
   int x = CX - w / 2;
   int y = PET_CY - h / 2;

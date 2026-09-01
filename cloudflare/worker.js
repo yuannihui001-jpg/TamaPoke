@@ -1,12 +1,12 @@
 // TamaPoke strict license gateway.
-// Release 2.30.0: encrypted origin, device-bound tokens, and browser grants.
+// Release 2.31.0: encrypted origin, device-bound tokens, and browser grants.
 // Bind a Workers KV namespace (tomagochi or LICENSES) and add FIRMWARE_KEY as a secret.
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "authorization,content-type,x-tamapoke-device,x-tamapoke-version",
+  "access-control-allow-headers": "authorization,content-type,x-tamapoke-device,x-tamapoke-version,x-tamapoke-release",
   "access-control-allow-methods": "GET,POST,OPTIONS",
 };
 
@@ -21,6 +21,8 @@ const GRANT_TTL_SECONDS = 10 * 60;
 // updates do not ask the owner for the license again. Browser install grants
 // remain short-lived and still require the author license.
 const DEVICE_GRANT_TTL_SECONDS = 365 * 24 * 60 * 60;
+const RELEASE_VERSION = "2.31.0";
+const RELEASE_PROOF = "TamaPoke-2.31.0-official";
 
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: JSON_HEADERS });
@@ -120,6 +122,16 @@ async function activate(request, env) {
   return json({ token: issued.token, expiresAt: issued.exp });
 }
 
+async function deviceBootstrap(request, env) {
+  const deviceId = deviceIdFrom(request);
+  const version = (request.headers.get("x-tamapoke-version") || "").trim();
+  const proof = (request.headers.get("x-tamapoke-release") || "").trim();
+  if (!deviceId || deviceId.length > 40 || version !== RELEASE_VERSION || proof !== RELEASE_PROOF)
+    return json({ error: "forbidden" }, 403);
+  const issued = await issueGrant(env, deviceId, "device");
+  return json({ token: issued.token, expiresAt: issued.exp, deviceId });
+}
+
 async function browserManifest(request, env) {
   let body;
   try { body = await request.json(); } catch (_) { return json({ error: "invalid_json" }, 400); }
@@ -133,10 +145,10 @@ async function browserManifest(request, env) {
   const issued = await issueGrant(env, "browser", "install");
   const base = new URL(request.url).origin;
   return json({
-    version: "2.30.0",
+    version: RELEASE_VERSION,
     manifest: {
       name: "TamaPoke",
-      version: "2.30.0",
+      version: RELEASE_VERSION,
       new_install_prompt_erase: true,
       builds: [{ chipFamily: "ESP32-S3", parts: [{ path: base + "/v1/install?grant=" + encodeURIComponent(issued.token), offset: 0 }] }],
     },
@@ -152,7 +164,7 @@ async function firmware(request, env, grantKind) {
   const deviceId = deviceIdFrom(request);
   if (grantKind === "device" && (!deviceId || record.deviceId !== deviceId)) return new Response("Forbidden", { status: 403 });
   try {
-    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.30.0-merged.bin.enc" : "tamapoke-2.30.0-app.bin.enc");
+    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.31.0-merged.bin.enc" : "tamapoke-2.31.0-app.bin.enc");
     return new Response(data, {
       headers: {
         "content-type": "application/octet-stream",
@@ -171,7 +183,7 @@ async function deviceVersion(request, env) {
   const deviceId = deviceIdFrom(request);
   if (!record || record.kind !== "device" || !deviceId || record.deviceId !== deviceId)
     return json({ error: "forbidden" }, 403);
-  return json({ version: "2.30.0", deviceId, update: (request.headers.get("x-tamapoke-version") || "") !== "2.30.0" });
+  return json({ version: RELEASE_VERSION, deviceId, update: (request.headers.get("x-tamapoke-version") || "") !== RELEASE_VERSION });
 }
 
 export default {
@@ -199,12 +211,13 @@ export default {
       });
     }
     if (url.pathname === "/v1/activate" && request.method === "POST") return activate(request, env);
+    if (url.pathname === "/v1/device-bootstrap" && request.method === "POST") return deviceBootstrap(request, env);
     if (url.pathname === "/v1/browser-manifest" && request.method === "POST") return browserManifest(request, env);
     if (url.pathname === "/v1/device-version" && request.method === "GET") return deviceVersion(request, env);
     if (url.pathname === "/v1/firmware" && request.method === "GET") return firmware(request, env, "device");
     if (url.pathname === "/v1/install" && request.method === "GET") return firmware(request, env, "install");
     if (url.pathname === "/health") {
-      return json({ ok: true, service: "tamapoke-license", version: "2.30.0" });
+      return json({ ok: true, service: "tamapoke-license", version: RELEASE_VERSION });
     }
     return json({ error: "not_found" }, 404);
   },
