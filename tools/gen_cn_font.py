@@ -37,7 +37,17 @@ def load_chars() -> list[str]:
         (ROOT / "shop.h").read_text(encoding="utf-8"),
         (ROOT / "TamaPoke.ino").read_text(encoding="utf-8"),
     ]
-    return sorted({c for text in texts for c in text if "\u4e00" <= c <= "\u9fff"})
+    def supported(ch: str) -> bool:
+        cp = ord(ch)
+        return (
+            0x4E00 <= cp <= 0x9FFF
+            or 0x2000 <= cp <= 0x206F
+            or 0x2190 <= cp <= 0x21FF
+            or 0x3000 <= cp <= 0x303F
+            or 0xFF00 <= cp <= 0xFFEF
+        )
+
+    return sorted({c for text in texts for c in text if supported(c)})
 
 
 def glyph_rows(font: ImageFont.FreeTypeFont, ch: str) -> list[int]:
