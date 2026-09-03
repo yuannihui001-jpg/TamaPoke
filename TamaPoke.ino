@@ -33,7 +33,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "2.37.0"
+#define FW_VERSION "2.38.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -163,9 +163,10 @@ bool updateAvailable = false;
 char updateVersion[16] = "";
 // 将最新 app 分区镜像放到这个公开地址后，设置页的“更新”即可 OTA。
 static const char *const AUTH_SERVER_URL = "https://tamapoke-license.yuannihui001.workers.dev";
+static const char *const AUTH_SERVER_HOST = "tamapoke-license.yuannihui001.workers.dev";
 // 仅用于已经刷入官方固件的设备首次取得长期 OTA 令牌；浏览器安装仍必须
 // 先通过作者许可校验。该值与 Worker 的发布门槛保持一致。
-static const char *const FW_RELEASE_PROOF = "TamaPoke-2.37.0-official";
+static const char *const FW_RELEASE_PROOF = "TamaPoke-2.38.0-official";
 
 // minijuego "toques": mantener la pokeball en el aire
 bool gameOpen = false;
@@ -825,20 +826,44 @@ class WifiTransferAwake {
   ~WifiTransferAwake() { WiFi.setSleep(true); }
 };
 
+static bool otaNetworkReady() {
+  if (WiFi.status() != WL_CONNECTED || WiFi.localIP() == IPAddress(0, 0, 0, 0)) return false;
+  IPAddress resolved;
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+    if (WiFi.hostByName(AUTH_SERVER_HOST, resolved) == 1 &&
+        resolved != IPAddress(0, 0, 0, 0)) {
+      Serial.printf("OTA DNS %s -> %s RSSI=%d\n", AUTH_SERVER_HOST,
+                    resolved.toString().c_str(), WiFi.RSSI());
+      return true;
+    }
+    delay(350 + attempt * 250);
+  }
+  Serial.printf("OTA DNS fallo host=%s status=%d ip=%s\n", AUTH_SERVER_HOST,
+                WiFi.status(), WiFi.localIP().toString().c_str());
+  return false;
+}
+
+static const char *otaNetworkErrorText(int code) {
+  if (code == -8) return "更新内存不足";
+  if (code == -11 || code == -12) return "更新服务器连接超时";
+  if (code == -1 || code == -4 || code == -5) return "更新服务器无法连接";
+  return "更新服务器未响应";
+}
+
 static bool requestDeviceVersion(String &response, int &statusCode) {
   response = "";
   statusCode = -1;
-  WifiTransferAwake awake;
   WiFiClientSecure client;
   client.setInsecure();
-  client.setHandshakeTimeout(15);
-  client.setTimeout(15000);
+  client.setHandshakeTimeout(25);
+  client.setTimeout(22000);
   HTTPClient check;
   String checkUrl = String(AUTH_SERVER_URL) + "/v1/device-version";
   if (!check.begin(client, checkUrl)) return false;
-  check.setConnectTimeout(15000);
-  check.setTimeout(15000);
-  check.useHTTP10();
+  check.setConnectTimeout(22000);
+  check.setTimeout(22000);
+  check.setReuse(false);
+  check.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   // 官方固件使用内置发布证明即可更新；旧版设备仍可携带长期令牌。
   if (authToken.length()) check.addHeader("Authorization", String("Bearer ") + authToken);
   check.addHeader("X-TamaPoke-Device", deviceIdString());
@@ -846,6 +871,7 @@ static bool requestDeviceVersion(String &response, int &statusCode) {
   check.addHeader("X-TamaPoke-Release", FW_RELEASE_PROOF);
   check.addHeader("Cache-Control", "no-cache");
   check.addHeader("Accept", "application/json");
+  check.addHeader("User-Agent", String("TamaPoke/") + FW_VERSION);
   statusCode = check.GET();
   if (statusCode > 0) response = check.getString();
   check.end();
@@ -882,24 +908,32 @@ void performOnlineVersionCheck() {
     return;
   }
   setWifiNotice("正在连接更新服务器", 20000);
+  WifiTransferAwake awake;
+  if (!otaNetworkReady()) {
+    setWifiNotice("更新服务器域名解析失败", 10000);
+    return;
+  }
   int checkCode = -1;
   String checkResponse;
-  bool checked = requestDeviceVersion(checkResponse, checkCode);
-  // Cloudflare/WiFi 初次恢复时偶尔会丢掉第一条 TLS 请求。只重建 HTTPS
-  // 请求，不切换 WiFi 状态，避免设置页的 WiFi 开关闪断。
-  if (!checked && WiFi.status() == WL_CONNECTED) {
-    delay(450);
+  bool checked = false;
+  // Every attempt owns a fresh TLS client. Reusing a failed ESP32 socket often
+  // leaves the next request in NOT_CONNECTED while WiFi itself is still up.
+  for (uint8_t attempt = 0; attempt < 3 && WiFi.status() == WL_CONNECTED; ++attempt) {
     checked = requestDeviceVersion(checkResponse, checkCode);
+    if (checked) break;
+    Serial.printf("更新检查重试 %u HTTP %d heap=%u\n", attempt + 1, checkCode,
+                  ESP.getFreeHeap());
+    delay(500 + attempt * 500);
   }
   if (!checked) {
     Serial.printf("更新检查网络失败 HTTP %d\n", checkCode);
-    setWifiNotice("网络连接失败 请重试", 8000);
+    setWifiNotice(otaNetworkErrorText(checkCode), 10000);
     return;
   }
   int vstart = checkResponse.indexOf("\"version\":\"");
   if (checkCode != HTTP_CODE_OK || vstart < 0) {
     Serial.printf("更新检查 HTTP %d\n", checkCode);
-    setWifiNotice("更新检查失败");
+    setWifiNotice(checkCode == HTTP_CODE_FORBIDDEN ? "官方版本验证失败" : "更新服务返回异常");
     return;
   }
   vstart += 11;
@@ -938,66 +972,64 @@ void performOnlineUpdate() {
   setWifiNotice("正在下载更新，请勿断电", 30000);
   Serial.printf("OTA %s\n", AUTH_SERVER_URL);
   WifiTransferAwake awake;
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setHandshakeTimeout(20);
-  HTTPClient http;
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setConnectTimeout(15000);
-  http.setTimeout(30000);
+  if (!otaNetworkReady()) {
+    setWifiNotice("更新服务器域名解析失败", 10000);
+    return;
+  }
   String url = String(AUTH_SERVER_URL) + "/v1/firmware";
-  bool opened = http.begin(client, url);
-  if (!opened) {
-    delay(450);
-    opened = http.begin(client, url);
-  }
-  if (!opened) {
-    setWifiNotice("网络连接失败 请重试");
-    return;
-  }
-  auto addOtaHeaders = [&]() {
-    if (authToken.length()) http.addHeader("Authorization", String("Bearer ") + authToken);
-    http.addHeader("X-TamaPoke-Device", deviceIdString());
-    http.addHeader("X-TamaPoke-Version", FW_VERSION);
-    http.addHeader("X-TamaPoke-Release", FW_RELEASE_PROOF);
-    http.addHeader("Cache-Control", "no-cache");
-  };
-  addOtaHeaders();
-  int code = http.GET();
-  if (code <= 0 && WiFi.status() == WL_CONNECTED) {
-    http.end();
-    delay(600);
-    if (http.begin(client, url)) {
-      http.setConnectTimeout(15000);
-      http.setTimeout(30000);
-      addOtaHeaders();
-      code = http.GET();
+  int lastCode = -1;
+  for (uint8_t attempt = 0; attempt < 3 && WiFi.status() == WL_CONNECTED; ++attempt) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setHandshakeTimeout(30);
+    client.setTimeout(30000);
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setConnectTimeout(25000);
+    http.setTimeout(30000);
+    http.setReuse(false);
+    if (!http.begin(client, url)) {
+      lastCode = -1;
+    } else {
+      if (authToken.length()) http.addHeader("Authorization", String("Bearer ") + authToken);
+      http.addHeader("X-TamaPoke-Device", deviceIdString());
+      http.addHeader("X-TamaPoke-Version", FW_VERSION);
+      http.addHeader("X-TamaPoke-Release", FW_RELEASE_PROOF);
+      http.addHeader("Cache-Control", "no-cache");
+      http.addHeader("User-Agent", String("TamaPoke/") + FW_VERSION);
+      lastCode = http.GET();
+      if (lastCode == HTTP_CODE_OK) {
+        int total = http.getSize();
+        if (total <= 0 || !Update.begin((size_t)total)) {
+          http.end();
+          setWifiNotice("更新空间不足");
+          return;
+        }
+        WiFiClient *stream = http.getStreamPtr();
+        size_t written = Update.writeStream(*stream);
+        bool ok = written == (size_t)total && Update.end(true) && Update.isFinished();
+        http.end();
+        if (!ok) {
+          Serial.printf("OTA 写入失败 %u/%u error=%u\n", (unsigned)written,
+                        (unsigned)total, Update.getError());
+          setWifiNotice("固件写入失败");
+          return;
+        }
+        setWifiNotice("更新完成，正在重启", 2000);
+        delay(500);
+        ESP.restart();
+        return;
+      }
+      http.end();
     }
+    Serial.printf("OTA 下载重试 %u HTTP %d heap=%u\n", attempt + 1, lastCode,
+                  ESP.getFreeHeap());
+    if (lastCode > 0) break;
+    delay(700 + attempt * 700);
   }
-  if (code != HTTP_CODE_OK) {
-    Serial.printf("OTA HTTP %d\n", code);
-    http.end();
-    setWifiNotice(code <= 0 ? "网络连接失败 请重试" : "在线更新失败");
-    return;
-  }
-  int total = http.getSize();
-  if (total <= 0 || !Update.begin((size_t)total)) {
-    http.end();
-    setWifiNotice("更新空间不足");
-    return;
-  }
-  WiFiClient *stream = http.getStreamPtr();
-  size_t written = Update.writeStream(*stream);
-  bool ok = written == (size_t)total && Update.end(true) && Update.isFinished();
-  http.end();
-  if (!ok) {
-    Serial.printf("OTA 写入失败 %u/%u\n", (unsigned)written, (unsigned)total);
-    setWifiNotice("在线更新失败");
-    return;
-  }
-  setWifiNotice("更新完成，正在重启", 2000);
-  delay(500);
-  ESP.restart();
+  Serial.printf("OTA 下载失败 HTTP %d wifi=%d ip=%s rssi=%d\n", lastCode,
+                WiFi.status(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  setWifiNotice(lastCode > 0 ? "更新下载被服务器拒绝" : otaNetworkErrorText(lastCode), 10000);
 }
 
 // ---------- consola serie (provision de SD + depuracion) ----------
@@ -5422,16 +5454,55 @@ void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool
   // con padding distinto (Hurt, Eat...) quedan todas a la misma altura de suelo
   int x0 = cx - (int)lroundf(a.w * scale / 2.0f);
   int y0 = groundY - (int)lroundf((a.base ? a.base : a.h) * scale);
-  for (int r = 0; r < a.h; r++) {
-    const uint8_t *row = fr + r * a.w;
-    int y1 = y0 + (int)lroundf(r * scale);
-    int y2 = y0 + (int)lroundf((r + 1) * scale);
-    for (int c = 0; c < a.w; c++) {
-      uint8_t idx = row[c];
-      if (idx == 0xFF) continue;
-      int x1 = x0 + (int)lroundf(c * scale);
-      int x2 = x0 + (int)lroundf((c + 1) * scale);
-      gfx->fillRect(x1, y1, max(1, x2 - x1), max(1, y2 - y1), sil ? INK_K : m.pal[idx]);
+  const bool refineEdges = !sil && scale >= 3.0f;
+  if (!refineEdges) {
+    for (int r = 0; r < a.h; r++) {
+      const uint8_t *row = fr + r * a.w;
+      int y1 = y0 + (int)lroundf(r * scale);
+      int y2 = y0 + (int)lroundf((r + 1) * scale);
+      for (int c = 0; c < a.w; c++) {
+        uint8_t idx = row[c];
+        if (idx == 0xFF) continue;
+        int x1 = x0 + (int)lroundf(c * scale);
+        int x2 = x0 + (int)lroundf((c + 1) * scale);
+        gfx->fillRect(x1, y1, max(1, x2 - x1), max(1, y2 - y1), sil ? INK_K : m.pal[idx]);
+      }
+    }
+    return;
+  }
+
+  // Scale2x/EPX reconstructs diagonal boundaries at twice the source detail.
+  // Palette colours stay exact while eyes, limbs and curved outlines use
+  // smaller, more even pixels than direct 7-8x enlargement.
+  const float fineScale = scale * 0.5f;
+  auto sample = [&](int r, int c) -> uint8_t {
+    return (r < 0 || r >= a.h || c < 0 || c >= a.w) ? 0xFF : fr[r * a.w + c];
+  };
+  for (int r = 0; r < a.h; ++r) {
+    for (int c = 0; c < a.w; ++c) {
+      uint8_t e = sample(r, c);
+      uint8_t b = sample(r - 1, c), d = sample(r, c - 1);
+      uint8_t f = sample(r, c + 1), h = sample(r + 1, c);
+      uint8_t q[4] = { e, e, e, e };
+      if (b != h && d != f) {
+        q[0] = d == b ? d : e;
+        q[1] = b == f ? f : e;
+        q[2] = d == h ? d : e;
+        q[3] = h == f ? f : e;
+      }
+      for (uint8_t sy = 0; sy < 2; ++sy) {
+        int vy = r * 2 + sy;
+        int y1 = y0 + (int)lroundf(vy * fineScale);
+        int y2 = y0 + (int)lroundf((vy + 1) * fineScale);
+        for (uint8_t sx = 0; sx < 2; ++sx) {
+          uint8_t idx = q[sy * 2 + sx];
+          if (idx == 0xFF) continue;
+          int vx = c * 2 + sx;
+          int x1 = x0 + (int)lroundf(vx * fineScale);
+          int x2 = x0 + (int)lroundf((vx + 1) * fineScale);
+          gfx->fillRect(x1, y1, max(1, x2 - x1), max(1, y2 - y1), m.pal[idx]);
+        }
+      }
     }
   }
 }

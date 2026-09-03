@@ -27,6 +27,4 @@ web/firmware/tamapoke-2.28.0-*.bin.enc
 web/firmware/tamapoke-*.bin
 
 # Release archives stay local. Only the current encrypted web images are public.
-releases/2.27.0-strict-authorized/old-public/
-releases/**/*.bin
-releases/**/*.bin.enc
+releases/

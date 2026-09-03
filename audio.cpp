@@ -81,7 +81,9 @@ static bool es8311Init() {
 // ---- sintetizador de tono cuadrado ----
 struct Note { uint16_t f, ms; };
 
-static const Note N_TAP[]    = {{880, 35}};
+// The former 35 ms single tone was nearly inaudible through the board's small
+// speaker. This compact two-note tick stays unobtrusive but is clearly audible.
+static const Note N_TAP[]    = {{1175, 42}, {0, 8}, {1568, 34}};
 static const Note N_EAT[]    = {{660, 45}, {0, 12}, {660, 45}};
 static const Note N_PLAY[]   = {{784, 45}, {988, 60}};
 static const Note N_HEART[]  = {{1047, 55}, {1319, 90}};
@@ -94,7 +96,7 @@ static const Note N_LEVEL[]  = {{784, 70}, {1047, 130}};
 
 struct SfxDef { const Note *n; uint8_t len; };
 static const SfxDef SFX[SFX_COUNT] = {
-  {N_TAP, 1}, {N_EAT, 3}, {N_PLAY, 2}, {N_HEART, 2}, {N_HATCH, 4},
+  {N_TAP, 3}, {N_EAT, 3}, {N_PLAY, 2}, {N_HEART, 2}, {N_HATCH, 4},
   {N_EVOLVE, 5}, {N_MEDAL, 5}, {N_DENY, 2}, {N_BYE, 3}, {N_LEVEL, 2},
 };
 
@@ -130,7 +132,9 @@ static void audioTask(void *) {
   for (;;) {
     if (xQueueReceive(gQ, &id, portMAX_DELAY) && gOn && gReady && id < SFX_COUNT) {
       uint8_t level = id == SFX_TAP ? gTouchVolumeLevel : gVolumeLevel;
-      gCurrentAmp = level == 0 ? 2400 : (level == 1 ? 5000 : 8000);
+      gCurrentAmp = id == SFX_TAP
+                        ? (level == 0 ? 5000 : (level == 1 ? 7600 : 10500))
+                        : (level == 0 ? 2400 : (level == 1 ? 5000 : 8000));
       digitalWrite(PA, HIGH);  // enciende el amplificador
       delay(8);                // deja que arranque
       const SfxDef &d = SFX[id];
@@ -160,7 +164,7 @@ void audioBegin() {
   p.end();
 
   gReady = true;
-  gQ = xQueueCreate(8, sizeof(uint8_t));
+  gQ = xQueueCreate(12, sizeof(uint8_t));
   xTaskCreatePinnedToCore(audioTask, "audio", 4096, nullptr, 1, nullptr, 0);
   sfxPlay(SFX_HATCH);  // jingle de arranque (confirma que suena)
 }
@@ -172,7 +176,11 @@ void sfxPlay(uint8_t id) {
     if (now - lastTapAt < 70) return;
     lastTapAt = now;
   }
-  if (gReady && gOn && gQ) xQueueSend(gQ, &id, 0);  // descarta si la cola esta llena
+  if (gReady && gOn && gQ) {
+    // Touch feedback is time-sensitive; other effects keep their normal order.
+    if (id == SFX_TAP) xQueueSendToFront(gQ, &id, 0);
+    else xQueueSend(gQ, &id, 0);
+  }
 }
 
 void audioSetEnabled(bool on) {

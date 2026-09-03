@@ -1,5 +1,5 @@
 // TamaPoke strict license gateway.
-// Release 2.37.0: responsive OTA, touch audio, growth weight and shop page swipes.
+// Release 2.38.0: robust OTA transport, audible touch feedback and refined pets.
 // Bind a Workers KV namespace (tomagochi or LICENSES) and add FIRMWARE_KEY as a secret.
 
 const JSON_HEADERS = {
@@ -21,7 +21,7 @@ const GRANT_TTL_SECONDS = 10 * 60;
 // updates do not ask the owner for the license again. Browser install grants
 // remain short-lived and still require the author license.
 const DEVICE_GRANT_TTL_SECONDS = 365 * 24 * 60 * 60;
-const RELEASE_VERSION = "2.37.0";
+const RELEASE_VERSION = "2.38.0";
 const RELEASE_PROOFS = {
   // Keep the previous official release eligible for a one-time bootstrap so
   // v2.31 devices can update without asking for the author license again.
@@ -32,6 +32,7 @@ const RELEASE_PROOFS = {
   "2.35.0": "TamaPoke-2.35.0-official",
   "2.36.0": "TamaPoke-2.36.0-official",
   "2.37.0": "TamaPoke-2.37.0-official",
+  "2.38.0": "TamaPoke-2.38.0-official",
 };
 
 function json(value, status = 200) {
@@ -176,7 +177,6 @@ async function browserManifest(request, env) {
 async function firmware(request, env, grantKind) {
   const url = new URL(request.url);
   const token = bearer(request) || url.searchParams.get("grant") || "";
-  const record = await loadToken(env, token);
   const binaryHeaders = {
     "content-type": "text/plain; charset=utf-8",
     "access-control-allow-origin": "*",
@@ -186,11 +186,12 @@ async function firmware(request, env, grantKind) {
   // Official firmware carries a release proof, so routine OTA never asks the
   // owner to enter a machine license. Browser installs still require a grant.
   const official = grantKind === "device" && officialDevice(request);
+  const record = official ? null : await loadToken(env, token);
   const authorized = record && record.kind === grantKind &&
     (grantKind !== "device" || (deviceId && record.deviceId === deviceId));
   if (!official && !authorized) return new Response("Forbidden", { status: 403, headers: binaryHeaders });
   try {
-    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.37.0-merged.bin.enc" : "tamapoke-2.37.0-app.bin.enc");
+    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.38.0-merged.bin.enc" : "tamapoke-2.38.0-app.bin.enc");
     return new Response(data, {
       headers: {
         "content-type": "application/octet-stream",
@@ -208,10 +209,11 @@ async function firmware(request, env, grantKind) {
 }
 
 async function deviceVersion(request, env) {
-  const record = await loadToken(env, bearer(request));
+  const official = officialDevice(request);
+  const record = official ? null : await loadToken(env, bearer(request));
   const deviceId = deviceIdFrom(request);
   const authorized = record && record.kind === "device" && deviceId && record.deviceId === deviceId;
-  if (!officialDevice(request) && !authorized)
+  if (!official && !authorized)
     return json({ error: "forbidden" }, 403);
   return json({ version: RELEASE_VERSION, deviceId, update: (request.headers.get("x-tamapoke-version") || "") !== RELEASE_VERSION });
 }
