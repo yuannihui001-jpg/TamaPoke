@@ -16,6 +16,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <esp32-hal-cpu.h>
 #include "Arduino_GFX_Library.h"
 #include "TouchDrvCSTXXX.hpp"
 #include "pin_config.h"
@@ -33,7 +34,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "2.38.0"
+#define FW_VERSION "2.39.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -166,7 +167,7 @@ static const char *const AUTH_SERVER_URL = "https://tamapoke-license.yuannihui00
 static const char *const AUTH_SERVER_HOST = "tamapoke-license.yuannihui001.workers.dev";
 // 仅用于已经刷入官方固件的设备首次取得长期 OTA 令牌；浏览器安装仍必须
 // 先通过作者许可校验。该值与 Worker 的发布门槛保持一致。
-static const char *const FW_RELEASE_PROOF = "TamaPoke-2.38.0-official";
+static const char *const FW_RELEASE_PROOF = "TamaPoke-2.39.0-official";
 
 // minijuego "toques": mantener la pokeball en el aire
 bool gameOpen = false;
@@ -346,6 +347,7 @@ void updateDialogTap(int16_t x, int16_t y);
 void performOnlineUpdate();
 void activateLicense(const String &license);
 String deviceIdString();
+void applyLowPowerPolicy(uint32_t now);
 void drawWorldBadge();
 void startBattle();
 void battleTap(int16_t x, int16_t y);
@@ -368,6 +370,8 @@ uint32_t choiceUntil = 0;   // se cierra solo a este millis
 int16_t tX0, tY0, tXl, tYl; // gesto en curso (inicio y ultima posicion)
 uint32_t tStart = 0;
 bool holdFired = false;
+bool lowPowerActive = false;
+bool panelDisplayOff = false;
 
 void setup() {
   Serial.setRxBufferSize(8192);  // la transferencia a SD llega en bloques de 2 KB
@@ -494,6 +498,7 @@ void loop() {
   }
 
   updateBrightness(now);
+  applyLowPowerPolicy(now);
 
   // vuelca el autoguardado periodico SOLO con la pantalla atenuada/apagada o
   // durmiendo: la escritura a NVS congela ~1s ambos cores (caché de flash off),
@@ -526,7 +531,9 @@ void loop() {
   uint32_t renderInterval = (gameOpen || memoryOpen || gameMenuOpen || worldOpen || shopOpen || warehouseOpen || decorOpen || sackOpen || battleOpen) ? 85 : 100;
   // 睡眠时保持状态成长，但降低刷屏频率；屏幕背光由 updateBrightness 置为最低。
   if (pet.sleeping) renderInterval = sleepTouchUntil > now ? 120 : 2000;
-  if (now - lastRender >= renderInterval) {
+  // 息屏/深度休眠时不再重复向 AMOLED 刷整帧；触摸后的 5 秒微亮窗口仍
+  // 允许绘制一次，保证用户能看到唤醒提示。RTC 与宠物计时继续运行。
+  if (!(lowPowerActive && sleepTouchUntil <= now) && now - lastRender >= renderInterval) {
     lastRender = now;
     render();
   }
@@ -549,6 +556,39 @@ void updateBrightness(uint32_t now) {
   if (target != current) {
     current = target;
     panel->setBrightness(target);
+  }
+}
+
+// 休眠/息屏的低功耗策略：关闭 Wi-Fi 射频并把 CPU 降到 80MHz，同时暂停
+// 不必要的整屏刷新。唤醒后恢复 240MHz；在线更新会在用户进入设置并点
+// 击更新时重新打开 STA，不依赖这里自动重连。
+void applyLowPowerPolicy(uint32_t now) {
+  (void)now;
+  const bool wantsLowPower = (pet.sleeping || screenOff) &&
+                             !otaCheckRunning && !otaDownloadRunning &&
+                             !wifiConnecting;
+  // A deliberate screen-off uses the panel's sleep command.  Pet sleep keeps
+  // the panel awake at minimum brightness so a touch can still give feedback.
+  if (screenOff && !panelDisplayOff) {
+    panel->displayOff();
+    panelDisplayOff = true;
+  } else if (!screenOff && panelDisplayOff) {
+    panel->displayOn();
+    panelDisplayOff = false;
+    lastRender = 0;
+  }
+  if (wantsLowPower && !lowPowerActive) {
+    lowPowerActive = true;
+    if (WiFi.getMode() != WIFI_OFF) WiFi.mode(WIFI_OFF);
+    audioSetPowerSave(true);
+    setCpuFrequencyMhz(80);
+    Serial.println("LOWPOWER on: WiFi off audio off CPU=80MHz");
+  } else if (!wantsLowPower && lowPowerActive) {
+    lowPowerActive = false;
+    audioSetPowerSave(false);
+    setCpuFrequencyMhz(240);
+    lastRender = 0;
+    Serial.println("LOWPOWER off: audio on CPU=240MHz");
   }
 }
 
@@ -1232,6 +1272,9 @@ void handleTouch() {
     tY0 = tYl = y;
     tStart = millis();
     holdFired = false;
+    // 在按下瞬间反馈，而不是等抬手后的页面处理完成；这也让滑动和
+    // 被唤醒的屏幕有一致的触摸确认音。onTap 中的同音效会被节流去重。
+    sfxPlay(SFX_TAP);
     swallowGesture = (dimStage > 0) || screenOff;  // si estaba a oscuras, solo despierta
     screenOff = false;
     lastInteract = millis();
@@ -1831,12 +1874,12 @@ static void drawRoomDetails(uint8_t biome, uint32_t now, bool night) {
     66, 392, 52, 390, 80, 344, 390, 55, 233, 233
   };
   static const int PROP_Y[20] = {
-    222, 236, 326, 286, 350, 310, 340, 325, 260, 334,
-    276, 315, 238, 320, 315, 338, 232, 320, 300, 255
+    218, 226, 278, 260, 286, 270, 280, 276, 250, 278,
+    260, 270, 226, 270, 272, 278, 224, 270, 268, 236
   };
   static const float PROP_SCALE[20] = {
-    0.78f, 0.74f, 0.58f, 0.64f, 0.72f, 0.66f, 0.62f, 0.64f, 0.66f, 0.78f,
-    0.66f, 0.66f, 0.74f, 0.68f, 0.72f, 0.70f, 0.72f, 0.68f, 0.72f, 0.76f
+    1.26f, 1.22f, 1.16f, 1.20f, 1.26f, 1.20f, 1.18f, 1.20f, 1.20f, 1.28f,
+    1.20f, 1.18f, 1.24f, 1.22f, 1.26f, 1.22f, 1.24f, 1.20f, 1.24f, 1.26f
   };
   uint32_t props = pet.roomProps();
   for (uint8_t slot = 0; slot < SHOP_ITEMS_PER_CATEGORY; ++slot)

@@ -22,6 +22,7 @@ static bool gOn = true;
 static volatile uint8_t gVolumeLevel = 1;
 static volatile uint8_t gTouchVolumeLevel = 1;
 static volatile int16_t gCurrentAmp = 5000;
+static volatile bool gPowerSave = false;
 static QueueHandle_t gQ = nullptr;
 
 // ---- I2C del códec ----
@@ -130,17 +131,32 @@ static void playTone(uint16_t f, uint16_t ms) {
 static void audioTask(void *) {
   uint8_t id;
   for (;;) {
-    if (xQueueReceive(gQ, &id, portMAX_DELAY) && gOn && gReady && id < SFX_COUNT) {
+    // Stop the I2S clock and the amplifier during sleep/screen-off.  Polling
+    // with a short timeout lets the task re-open the codec immediately after
+    // the user wakes the device without changing the saved sound preference.
+    static bool suspended = false;
+    if (gPowerSave && !suspended) {
+      gReady = false;
+      digitalWrite(PA, LOW);
+      i2s.end();
+      suspended = true;
+    } else if (!gPowerSave && suspended) {
+      i2s.setPins(I2S_BCK_IO, I2S_WS_IO, I2S_DO_IO, I2S_DI_IO, I2S_MCK_IO);
+      bool ok = i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT,
+                          I2S_SLOT_MODE_STEREO, I2S_STD_SLOT_BOTH) && es8311Init();
+      gReady = ok;
+      if (ok) digitalWrite(PA, HIGH);
+      suspended = !ok;
+    }
+    if (xQueueReceive(gQ, &id, pdMS_TO_TICKS(100)) && gOn && gReady && !gPowerSave && id < SFX_COUNT) {
       uint8_t level = id == SFX_TAP ? gTouchVolumeLevel : gVolumeLevel;
       gCurrentAmp = id == SFX_TAP
                         ? (level == 0 ? 5000 : (level == 1 ? 7600 : 10500))
                         : (level == 0 ? 2400 : (level == 1 ? 5000 : 8000));
-      digitalWrite(PA, HIGH);  // enciende el amplificador
-      delay(8);                // deja que arranque
+      digitalWrite(PA, HIGH);  // official board example keeps NS4150B enabled
       const SfxDef &d = SFX[id];
       for (uint8_t i = 0; i < d.len; i++) playTone(d.n[i].f, d.n[i].ms);
-      delay(60);               // deja salir la cola del DMA antes de cortar
-      digitalWrite(PA, LOW);   // apaga el amp entre sonidos (evita siseo)
+      delay(12);               // deja salir la cola del DMA antes del siguiente efecto
     }
   }
 }
@@ -148,7 +164,9 @@ static void audioTask(void *) {
 void audioBegin() {
   // I2S primero: arranca el MCLK que necesita el códec para engancharse
   pinMode(PA, OUTPUT);
-  digitalWrite(PA, LOW);   // amp apagado; la tarea lo enciende al reproducir
+  // The Waveshare reference example enables the NS4150B PA before playback.
+  // Keeping it enabled avoids losing short touch clicks during PA wake-up.
+  digitalWrite(PA, HIGH);
 
   i2s.setPins(I2S_BCK_IO, I2S_WS_IO, I2S_DO_IO, I2S_DI_IO, I2S_MCK_IO);
   if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT,
@@ -185,6 +203,8 @@ void sfxPlay(uint8_t id) {
 
 void audioSetEnabled(bool on) {
   gOn = on;
+  if (!on || gPowerSave) digitalWrite(PA, LOW);
+  else if (gReady) digitalWrite(PA, HIGH);
   Preferences p;
   p.begin("tamapoke", false);
   p.putBool("snd", on);
@@ -192,4 +212,9 @@ void audioSetEnabled(bool on) {
 }
 void audioSetVolume(uint8_t level) { gVolumeLevel = min((uint8_t)2, level); }
 void audioSetTouchVolume(uint8_t level) { gTouchVolumeLevel = min((uint8_t)2, level); }
+void audioSetPowerSave(bool on) {
+  gPowerSave = on;
+  if (on) digitalWrite(PA, LOW);
+  else if (gReady && gOn) digitalWrite(PA, HIGH);
+}
 bool audioEnabled() { return gOn; }

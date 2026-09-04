@@ -1,5 +1,5 @@
 // TamaPoke strict license gateway.
-// Release 2.38.0: robust OTA transport, audible touch feedback and refined pets.
+// Release 2.39.0: visible scene props, touch audio and sleep power saving.
 // Bind a Workers KV namespace (tomagochi or LICENSES) and add FIRMWARE_KEY as a secret.
 
 const JSON_HEADERS = {
@@ -21,7 +21,7 @@ const GRANT_TTL_SECONDS = 10 * 60;
 // updates do not ask the owner for the license again. Browser install grants
 // remain short-lived and still require the author license.
 const DEVICE_GRANT_TTL_SECONDS = 365 * 24 * 60 * 60;
-const RELEASE_VERSION = "2.38.0";
+const RELEASE_VERSION = "2.39.0";
 const RELEASE_PROOFS = {
   // Keep the previous official release eligible for a one-time bootstrap so
   // v2.31 devices can update without asking for the author license again.
@@ -32,7 +32,7 @@ const RELEASE_PROOFS = {
   "2.35.0": "TamaPoke-2.35.0-official",
   "2.36.0": "TamaPoke-2.36.0-official",
   "2.37.0": "TamaPoke-2.37.0-official",
-  "2.38.0": "TamaPoke-2.38.0-official",
+  "2.39.0": "TamaPoke-2.39.0-official",
 };
 
 function json(value, status = 200) {
@@ -191,7 +191,7 @@ async function firmware(request, env, grantKind) {
     (grantKind !== "device" || (deviceId && record.deviceId === deviceId));
   if (!official && !authorized) return new Response("Forbidden", { status: 403, headers: binaryHeaders });
   try {
-    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.38.0-merged.bin.enc" : "tamapoke-2.38.0-app.bin.enc");
+    const data = await decryptFirmware(env, grantKind === "install" ? "tamapoke-2.39.0-merged.bin.enc" : "tamapoke-2.39.0-app.bin.enc");
     return new Response(data, {
       headers: {
         "content-type": "application/octet-stream",

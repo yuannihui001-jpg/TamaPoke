@@ -22,4 +22,5 @@ void sfxPlay(uint8_t id);   // encola un efecto (no bloquea el loop)
 void audioSetEnabled(bool on);
 void audioSetVolume(uint8_t level);
 void audioSetTouchVolume(uint8_t level);
+void audioSetPowerSave(bool on);
 bool audioEnabled();
